@@ -66,7 +66,6 @@
 
 /*****************************************************************************/
 
-static void http_set_socket_sndtimeo(int fd, int32_t send_timeout);
 static void http_state_free(struct http_state *https);
 static int http_close(struct fetch_state *fs);
 static int http_retrieve(struct fetch_state *fs,int * download_status);
@@ -204,24 +203,6 @@ int http_socket_reconnect(int *a_socket, int use_connect, int hangup)
 #endif
 
 	return (0);
-}
-
-/*****************************************************************************/
-
-/*
- * http_set_socket_sndtimeo sets the send timeout for the socket fd.
- * send_timeout is in seconds. 0 = use default.
- */
-static void http_set_socket_sndtimeo(int fd, int32_t send_timeout)
-{
-	if (fd >= 0)
-	{
-		struct timeval timeout;
-		
-		timeout.tv_sec = send_timeout;
-		timeout.tv_usec = 0;
-		(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-	}
 }
 
 /*****************************************************************************/
@@ -607,9 +588,6 @@ retry:
 			goto out;
 		}
 	}
-
-	/* use WEBDAV_IO_TIMEOUT */
-	http_set_socket_sndtimeo(*(fs->fs_socketptr), WEBDAV_IO_TIMEOUT);
 
 reconnect:
 
@@ -2178,9 +2156,6 @@ int http_get_body(struct fetch_state *fs, struct iovec *iov, int iovlen,
 		}
 	}
 
-	/* use WEBDAV_IO_TIMEOUT */
-	http_set_socket_sndtimeo(*(fs->fs_socketptr), WEBDAV_IO_TIMEOUT);
-
 retry:
 	fs->fs_status = "sending request message";
 
@@ -3476,7 +3451,7 @@ retry:
 	addstr(iov, n, "\r\n");
 	if (!lockdata->refresh)
 	{
-		addstr(iov, n, "Content-Type: text/xml: charset=\"utf-8\"\r\n");
+		addstr(iov, n, "Content-Type: text/xml; charset=\"utf-8\"\r\n");
 		size_index = n;
 		++n;
 	}
@@ -4329,13 +4304,13 @@ out:
   file up to the webdav server
 */
 
-int http_put(struct fetch_state *fs, void *array_elem)
+int http_put(struct fetch_state *fs, void *arg)
 {
 	struct iovec iov[NIOV];
 	struct http_state *https;
 	int local;									/* local file */
 	int n = 0;
-	struct file_array_element *file_array_elem = (struct file_array_element *)array_elem;
+	struct webdav_put_struct *putinfo = (struct webdav_put_struct *)arg;
 	struct msghdr msg;
 	int myreturn = 0;
 	size_t total_length;
@@ -4353,9 +4328,9 @@ int http_put(struct fetch_state *fs, void *array_elem)
 
 	/* Get the local file ready */
 
-	if (array_elem != (void *) - 1)
+	if (arg != (void *) - 1)
 	{
-		local = file_array_elem->fd;			/* originally opened in webdav_open() */
+		local = putinfo->fd;			/* originally opened in webdav_open() */
 
 		/* Find out the file's length */
 		local_len = lseek(local, 0, SEEK_END);
@@ -4406,10 +4381,10 @@ retry:
 	addstr(iov, n, https->http_host_header);
 	snprintf(lengthline, SHORT_HTTP_LINELEN, "Content-Length: %qd\r\n", local_len);
 	addstr(iov, n, lengthline);
-	if ((array_elem != (void *) - 1) && (file_array_elem->lockdata.locktoken))
+	if ((arg != (void *) - 1) && (putinfo->locktoken))
 	{
 		addstr(iov, n, "If:(<");
-		addstr(iov, n, file_array_elem->lockdata.locktoken);
+		addstr(iov, n, putinfo->locktoken);
 		addstr(iov, n, ">)\r\n");
 	}
 
@@ -4438,14 +4413,13 @@ retry:
 	msg.msg_controllen = 0;
 	msg.msg_flags = 0;
 
-	/* open the socket if needed */
-	if (*(fs->fs_socketptr) < 0)
+	/* always open a new socket to prevent the possibility of hanging at sendmsg() for
+	 * 10 minutes if the existing socket is unexpectedly half-closed by the server.
+	 */
+	if (http_socket_reconnect(fs->fs_socketptr, fs->fs_use_connect, 0))
 	{
-		if (http_socket_reconnect(fs->fs_socketptr, fs->fs_use_connect, 0))
-		{
-			myreturn = EIO;
-			goto out;
-		}
+		myreturn = EIO;
+		goto out;
 	}
 
 reconnect:
@@ -4461,9 +4435,6 @@ reconnect:
 		fprintf(logfile, " Length = %qd\n", local_len);
 	}
 	
-	/* If not reconnecting, use WEBDAV_IO_TIMEOUT, else use the default timeout */
-	http_set_socket_sndtimeo(*(fs->fs_socketptr), reconnected ? 0 : WEBDAV_IO_TIMEOUT);
-
 	writeresult = sendmsg(*(fs->fs_socketptr), &msg, 0);
 	if (writeresult < 0)
 	{
@@ -4696,9 +4667,6 @@ retry:
 		status = ENODEV;
 		goto out;
 	}
-
-	/* use WEBDAV_IO_TIMEOUT */
-	http_set_socket_sndtimeo(*(fs->fs_socketptr), WEBDAV_IO_TIMEOUT);
 
 reconnect:
 
