@@ -60,7 +60,6 @@ struct HeaderFieldValue
 
 /******************************************************************************/
 
-static CFURLRef baseURL = NULL;			/* the base URL for this mount */
 static CFStringRef userAgentHeaderValue = NULL;	/* The User-Agent request-header value */
 static CFIndex first_read_len = 4096;	/* bytes.  Amount to download at open so first read at offset 0 doesn't stall */
 static CFStringRef X_Source_Id_HeaderValue = NULL;	/* the X-Source-Id header value, or NULL if not iDisk */
@@ -638,7 +637,7 @@ static int InitUserAgentHeaderValue(int add_mirror_comment)
 	else
 	{
 		/* create the generic User-Agent request-header string WebDAV FS used to use */
-		snprintf(buf, sizeof(buf), "WebDAVFS/1.3 %s/%s (%s)",
+		snprintf(buf, sizeof(buf), "WebDAVFS/1.4 %s/%s (%s)",
 			ostype, osrelease, machine);
 	}
 			
@@ -693,7 +692,7 @@ static void InitXSourceIdHeaderValue(void)
 	X_Source_Id_HeaderValue = NULL;
 	
 	/* get the host name */
-	hostName = CFURLCopyHostName(baseURL);
+	hostName = CFURLCopyHostName(gBaseURL);
 	require_quiet(hostName != NULL, CFURLCopyHostName);
 	
 	/* is it "idisk.mac.com" - if not, we don't want it */
@@ -757,9 +756,9 @@ int network_init(const UInt8 *uri, CFIndex uriLength, int *store_notify_fd, int 
 	error = network_update_proxy(NULL);
 	require_noerr_quiet(error, network_update_proxy);
 
-	/* create baseURL */
-	baseURL = CFURLCreateAbsoluteURLWithBytes(kCFAllocatorDefault, uri, uriLength, kCFStringEncodingUTF8, NULL, FALSE);
-	require_action_string(baseURL != NULL, CFURLCreateAbsoluteURLWithBytes, error = ENOMEM, "name was not legal UTF8");
+	/* create gBaseURL */
+	gBaseURL = CFURLCreateAbsoluteURLWithBytes(kCFAllocatorDefault, uri, uriLength, kCFStringEncodingUTF8, NULL, FALSE);
+	require_action_string(gBaseURL != NULL, CFURLCreateAbsoluteURLWithBytes, error = ENOMEM, "name was not legal UTF8");
 
 	/* initialize first_read_len variable */
 	get_first_read_len();
@@ -844,13 +843,14 @@ static CFURLRef create_cfurl_from_node(
 		/*
 		 * Then percent escape everything that CFURLCreateStringByAddingPercentEscapes()
 		 * considers illegal URL characters plus the characters ";" and "?" which are
-		 * not legal pchar (see rfc2396) characters.
+		 * not legal pchar (see rfc2396) characters, and ":" so that names in the root
+		 * directory do not look like absolute URLs with some weird scheme.
 		 */
-		escapedPathRef = CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, stringRef, NULL, CFSTR(";?"), kCFStringEncodingUTF8);
+		escapedPathRef = CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, stringRef, NULL, CFSTR(":;?"), kCFStringEncodingUTF8);
 		require(escapedPathRef != NULL, CFURLCreateStringByAddingPercentEscapes);
 		
 		/* create the relative URL */
-		urlRef = CFURLCreateWithString(kCFAllocatorDefault, escapedPathRef, baseURL);
+		urlRef = CFURLCreateWithString(kCFAllocatorDefault, escapedPathRef, gBaseURL);
 		require(urlRef != NULL, CFURLCreateWithString);
 		
 		/* and then make an absolute copy of it */
@@ -868,8 +868,8 @@ CFStringCreateWithCString:
 	else
 	{
 		/* no relative path -- use the base URL */
-		CFRetain(baseURL);
-		urlRef = baseURL;
+		CFRetain(gBaseURL);
+		urlRef = gBaseURL;
 	}
 
 	free(node_path);
@@ -1158,7 +1158,7 @@ static int ConfirmCertificate(CFReadStreamRef readStreamRef, SInt32 error)
 	CFRelease(error_number);
 	
 	/* get the host name from the base URL and add it with the kSSLClientPropTLSServerHostName key */
-	host_name = CFURLCopyHostName(baseURL);
+	host_name = CFURLCopyHostName(gBaseURL);
 	require(host_name != NULL, CFURLCopyHostName);
 	
 	CFDictionaryAddValue(dict, kSSLClientPropTLSServerHostName, host_name);
@@ -1521,7 +1521,7 @@ static int stream_get_transaction(
 	CFHTTPMessageRef *response)
 {
 	struct ReadStreamRec *readStreamRecPtr;
-	void *buffer;
+	UInt8 *buffer;
 	CFIndex totalRead;
 	CFIndex bytesRead;
 	CFTypeRef theResponsePropertyRef;
@@ -1550,7 +1550,7 @@ static int stream_get_transaction(
 	background_load = FALSE;
 	while ( 1 )
 	{
-		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, (UInt8 *)buffer + totalRead, first_read_len - totalRead);
+		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, buffer + totalRead, first_read_len - totalRead);
 		if ( bytesRead > 0 )
 		{
 			totalRead += bytesRead;
@@ -1813,7 +1813,7 @@ static int stream_transaction_from_file(
 	/* Send the message and eat the response */
 	while ( 1 )
 	{
-		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, (UInt8 *)buffer, BODY_BUFFER_SIZE);
+		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, buffer, BODY_BUFFER_SIZE);
 		if ( bytesRead > 0 )
 		{
 			continue;
@@ -1935,8 +1935,8 @@ static int stream_transaction(
 {
 	struct ReadStreamRec *readStreamRecPtr;
 	CFIndex	totalRead;
-	void *currentbuffer;
-	void *newBuffer;
+	UInt8 *currentbuffer;
+	UInt8 *newBuffer;
 	CFIndex bytesRead;
 	CFIndex bytesToRead;
 	CFIndex bufferSize;
@@ -1967,7 +1967,7 @@ static int stream_transaction(
 	while ( 1 )
 	{
 		bytesToRead = bufferSize - totalRead;
-		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, (UInt8 *)currentbuffer + totalRead, bytesToRead);
+		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, currentbuffer + totalRead, bytesToRead);
 		if ( bytesRead > 0 )
 		{
 			totalRead += bytesRead;
@@ -2431,7 +2431,7 @@ int get_from_attributes_cache(struct node_entry *node, uid_t uid)
 	
 	result = FALSE;	/* default to FALSE */
 	
-	if ( node_attributes_valid(node, uid) && (node->attr_appledoubleheader != NULL) )
+	if ( node_appledoubleheader_valid(node, uid) )
 	{
 		require(fchflags(node->file_fd, 0) == 0, fchflags);
 		require(lseek(node->file_fd, (off_t)0, SEEK_SET) != -1, lseek);
@@ -2456,7 +2456,7 @@ int get_from_attributes_cache(struct node_entry *node, uid_t uid)
 		else
 		{
 			node->file_status = WEBDAV_DOWNLOAD_FINISHED;
-			node->file_validated_time = node->attr_time;
+			node->file_validated_time = node->attr_appledoubleheader_time;
 			node->file_last_modified = (node->attr_stat.st_mtimespec.tv_sec != 0) ? node->attr_stat.st_mtimespec.tv_sec : -1;
 			/* ••••• should I get the etag when I get attr_appledoubleheader? probably */ 
 			if ( node->file_entity_tag != NULL )
@@ -2491,7 +2491,7 @@ static int network_stat(
 	CFIndex count;
 	CFDataRef bodyData;
 	/* the xml for the message body */
-	const char xmlString[] =
+	const UInt8 xmlString[] =
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<D:propfind xmlns:D=\"DAV:\">\n"
 			"<D:prop>\n"
@@ -2509,7 +2509,7 @@ static int network_stat(
 	};
 	
 	/* create the message body with the xml */
-	bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen(xmlString), kCFAllocatorNull);
+	bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen((const char *)xmlString), kCFAllocatorNull);
 	require_action(bodyData != NULL, CFDataCreateWithBytesNoCopy, error = EIO);
 	
 	/* send request to the server and get the response */
@@ -2518,7 +2518,7 @@ static int network_stat(
 	if ( !error )
 	{
 		/* parse the statbuf from the response buffer */
-		error = parse_stat((char *)responseBuffer, (int)count, statbuf);
+		error = parse_stat(responseBuffer, count, statbuf);
 		
 		/* free the response buffer */
 		free(responseBuffer);
@@ -2543,7 +2543,7 @@ static int network_dir_is_empty(
 	CFIndex count;
 	CFDataRef bodyData;
 	/* the xml for the message body */
-	const char xmlString[] =
+	const UInt8 xmlString[] =
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<D:propfind xmlns:D=\"DAV:\">\n"
 			"<D:prop>\n"
@@ -2562,7 +2562,7 @@ static int network_dir_is_empty(
 	responseBuffer = NULL;
 
 	/* create the message body with the xml */
-	bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen(xmlString), kCFAllocatorNull);
+	bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen((const char *)xmlString), kCFAllocatorNull);
 	require_action(bodyData != NULL, CFDataCreateWithBytesNoCopy, error = EIO);
 	
 	/* send request to the server and get the response */
@@ -2573,7 +2573,7 @@ static int network_dir_is_empty(
 		int num_entries;
 		
 		/* parse responseBuffer to get the number of entries */
-		error = parse_file_count((char *)responseBuffer, (int)count, &num_entries);
+		error = parse_file_count(responseBuffer, count, &num_entries);
 		if ( !error )
 		{
 			if (num_entries > 1)
@@ -2606,7 +2606,7 @@ int network_lookup(
 	struct node_entry *node,	/* -> parent node */
 	char *name,					/* -> filename to find */
 	size_t name_length,			/* -> length of name */
-	struct stat *statbuf)		/* <- stat information is returned in this buffer */
+	struct stat *statbuf)		/* <- stat information is returned in this buffer except for st_ino */
 {
 	int error;
 	CFURLRef urlRef;
@@ -2645,6 +2645,11 @@ int network_getattr(
 	
 	/* let network_stat do the rest of the work */
 	error = network_stat(uid, urlRef, statbuf);
+	if ( error == 0 )
+	{
+		/* network_stat gets all of the struct stat fields except for st_ino so fill it in here with the fileid of the node */
+		statbuf->st_ino = node->fileid;
+	}
 	
 	CFRelease(urlRef);
 	
@@ -2673,7 +2678,7 @@ int network_mount(
 	int dav_level;
 	struct stat statbuf;
 	
-	urlRef = baseURL;
+	urlRef = gBaseURL;
 	
 	error = network_getDAVLevel(uid, urlRef, &dav_level);
 	if ( error == 0 )
@@ -2746,7 +2751,7 @@ int network_finish_download(
 	struct node_entry *node,
 	struct ReadStreamRec *readStreamRecPtr)
 {
-	void * buffer;
+	UInt8 *buffer;
 	CFIndex bytesRead;
 	
 	/* malloc a buffer */
@@ -2763,7 +2768,7 @@ int network_finish_download(
 			 * the only way to know at termination if the download was
 			 * finished, or if the download was incomplete.
 			 */
-			bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, (UInt8 *)buffer, 1); /* make it a small read */
+			bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, buffer, 1); /* make it a small read */
 			if ( bytesRead == 0 )
 			{
 				/*
@@ -2783,7 +2788,7 @@ int network_finish_download(
 			}
 		}
 		
-		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, (UInt8 *)buffer, BODY_BUFFER_SIZE);
+		bytesRead = CFReadStreamRead(readStreamRecPtr->readStreamRef, buffer, BODY_BUFFER_SIZE);
 		if ( bytesRead > 0 )
 		{
 			require(write(node->file_fd, buffer, (size_t)bytesRead) == (ssize_t)bytesRead, write);
@@ -2873,8 +2878,17 @@ int network_open(
 	}
 	else
 	{
-		/* we must check with server when opening with write access */
-		ask_server = TRUE;
+		/* if we just created the file and it's completely downloaded, we won't check */
+		if ( NODE_FILE_RECENTLY_CREATED(node) &&
+			((node->file_status & WEBDAV_DOWNLOAD_STATUS_MASK) == WEBDAV_DOWNLOAD_FINISHED) )
+		{
+			ask_server = FALSE;
+		}
+		else
+		{
+			/* we must check with server when opening with write access */
+			ask_server = TRUE;
+		}
 	}
 	
 	if ( ask_server )
@@ -3096,7 +3110,7 @@ int network_statfs(
 	UInt8 *responseBuffer;
 	CFIndex count;
 	CFDataRef bodyData;
-	const char xmlString[] =
+	const UInt8 xmlString[] =
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<D:propfind xmlns:D=\"DAV:\">\n"
 			"<D:prop>\n"
@@ -3117,7 +3131,7 @@ int network_statfs(
 	require_action_quiet(urlRef != NULL, create_cfurl_from_node, error = EIO);
 	
 	/* create a CFDataRef with the xml that is our message body */
-	bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen(xmlString), kCFAllocatorNull);
+	bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen((const char *)xmlString), kCFAllocatorNull);
 	require_action(bodyData != NULL, CFDataCreateWithBytesNoCopy, error = EIO);
 	
 	/* send request to the server and get the response */
@@ -3126,7 +3140,7 @@ int network_statfs(
 	if ( !error )
 	{
 		/* parse responseBuffer to get the statfsbuf */
-		error = parse_statfs((char *)responseBuffer, (int)count, fs_attr);
+		error = parse_statfs(responseBuffer, count, fs_attr);
 		
 		/* free the response buffer */
 		free(responseBuffer);
@@ -3197,7 +3211,9 @@ create_cfurl_from_node:
 
 int network_fsync(
 	uid_t uid,					/* -> uid of the user making the request */
-	struct node_entry *node)	/* -> node to sync with server */
+	struct node_entry *node,	/* -> node to sync with server */
+	off_t *file_length,			/* <- length of file */
+	time_t *file_last_modified)	/* <- date of last modification */
 {
 	int error;
 	CFURLRef urlRef;
@@ -3206,12 +3222,12 @@ int network_fsync(
 	UInt32 statusCode;
 	UInt32 auth_generation;
 	CFStringRef lockTokenRef;
-	time_t file_last_modified;
 	char *file_entity_tag;
 	int retryTransaction;
 	
 	error = 0;
-	file_last_modified = -1;
+	*file_last_modified = -1;
+	*file_length = -1;
 	file_entity_tag = NULL;
 	message = NULL;
 	responseRef = NULL;
@@ -3324,7 +3340,7 @@ CFHTTPMessageCreateRequest:
 				headerRef = CFHTTPMessageCopyHeaderFieldValue(responseRef, CFSTR("Last-Modified"));
 				if ( headerRef )
 				{
-					file_last_modified = DateStringToTime(headerRef);
+					*file_last_modified = DateStringToTime(headerRef);
 					CFRelease(headerRef);
 				}
 				headerRef = CFHTTPMessageCopyHeaderFieldValue(responseRef, CFSTR("ETag"));
@@ -3362,13 +3378,14 @@ CFHTTPMessageCreateRequest:
 		CFRelease(responseRef);
 	}
 	
-	if ( (file_last_modified == -1) && (file_entity_tag == NULL) )
+	if ( (error == 0) && (*file_last_modified == -1) && (file_entity_tag == NULL) )
 	{
+		int propError;
 		UInt8 *responseBuffer;
 		CFIndex count;
 		CFDataRef bodyData;
 		/* the xml for the message body */
-		const char xmlString[] =
+		const UInt8 xmlString[] =
 			"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 			"<D:propfind xmlns:D=\"DAV:\">\n"
 				"<D:prop>\n"
@@ -3384,20 +3401,20 @@ CFHTTPMessageCreateRequest:
 			{ CFSTR("Depth"), CFSTR("0") }
 		};
 
-		error = 0;
+		propError = 0;
 		responseBuffer = NULL;
 
 		/* create the message body with the xml */
-		bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen(xmlString), kCFAllocatorNull);
-		require_action(bodyData != NULL, CFDataCreateWithBytesNoCopy, error = EIO);
+		bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen((const char *)xmlString), kCFAllocatorNull);
+		require_action(bodyData != NULL, CFDataCreateWithBytesNoCopy, propError = EIO);
 		
 		/* send request to the server and get the response */
-		error = send_transaction(uid, urlRef, CFSTR("PROPFIND"), bodyData,
+		propError = send_transaction(uid, urlRef, CFSTR("PROPFIND"), bodyData,
 			headerCount, headers, TRUE, &responseBuffer, &count, NULL);
-		if ( !error )
+		if ( propError == 0 )
 		{
 			/* parse responseBuffer to get file_last_modified and/or file_entity_tag */
-			error = parse_cachevalidators((char *)responseBuffer, count, &file_last_modified, &file_entity_tag);
+			propError = parse_cachevalidators(responseBuffer, count, file_last_modified, &file_entity_tag);
 			/* free the response buffer */
 			free(responseBuffer);
 		}
@@ -3415,12 +3432,15 @@ create_cfurl_from_node:
 	
 	if ( !error )
 	{
-		node->file_last_modified = file_last_modified;
+		node->file_last_modified = *file_last_modified;
 		if ( node->file_entity_tag != NULL )
 		{
 			free(node->file_entity_tag);
 		}
 		node->file_entity_tag = file_entity_tag;
+		
+		/* get the file length */
+		*file_length = lseek(node->file_fd, 0LL, SEEK_END);
 	}
 
 	return ( error );
@@ -3664,7 +3684,7 @@ int network_lock(
 	UInt8 *responseBuffer;
 	CFIndex count;
 	CFDataRef bodyData;
-	const char xmlString[] =
+	const UInt8 xmlString[] =
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<D:lockinfo xmlns:D=\"DAV:\">\n"
 			"<D:lockscope><D:exclusive/></D:lockscope>\n"
@@ -3713,7 +3733,7 @@ int network_lock(
 	{
 		lockTokenRef = NULL;
 		/* create a CFDataRef with the xml that is our message body */
-		bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen(xmlString), kCFAllocatorNull);
+		bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, xmlString, strlen((const char *)xmlString), kCFAllocatorNull);
 		require_action(bodyData != NULL, CFDataCreateWithBytesNoCopy, error = EIO);
 		
 		headerCount = 4;
@@ -3833,7 +3853,7 @@ int network_readdir(
 	UInt8 *responseBuffer;
 	CFIndex count;
 	CFDataRef bodyData;
-	const char xmlString[] =
+	const UInt8 xmlString[] =
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<D:propfind xmlns:D=\"DAV:\">\n"
 			"<D:prop>\n"
@@ -3842,7 +3862,7 @@ int network_readdir(
 				"<D:resourcetype/>\n"
 			"</D:prop>\n"
 		"</D:propfind>\n";
-	const char xmlStringCache[] =
+	const UInt8 xmlStringCache[] =
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<D:propfind xmlns:D=\"DAV:\">\n"
 			"<D:prop xmlns:A=\"http://www.apple.com/webdav_fs/props/\">\n"
@@ -3866,7 +3886,7 @@ int network_readdir(
 
 	/* create a CFDataRef with the xml that is our message body */
 	bodyData = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault,
-		(cache ? xmlStringCache : xmlString), strlen(cache ? xmlStringCache : xmlString), kCFAllocatorNull);
+		(cache ? xmlStringCache : xmlString), strlen((const char *)(cache ? xmlStringCache : xmlString)), kCFAllocatorNull);
 	require_action(bodyData != NULL, CFDataCreateWithBytesNoCopy, error = EIO);
 
 	/* send request to the server and get the response */
@@ -3985,7 +4005,7 @@ int network_read(
 			/* don't return more than we asked for */
 			responseCount = count;
 		}
-		*buffer = responseBuffer;
+		*buffer = (char *)responseBuffer;
 		*actual_count = responseCount;
 	}
 	

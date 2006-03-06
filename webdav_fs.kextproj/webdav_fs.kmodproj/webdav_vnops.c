@@ -34,19 +34,21 @@
  */
 
 #define APPLE_PRIVATE   1 // еееее so we can use sock_nointerrupt()
+
 #include <sys/types.h>
-#include <sys/queue.h>
-#include <sys/lock.h>
-#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/vnode.h>
+#include <sys/proc.h>
+#include <sys/malloc.h>
 #include <sys/ubc.h>
 #include <sys/fcntl.h>
+#include <sys/dirent.h>
 #include <sys/unistd.h>
+#include <sys/kpi_socket.h>
+#include <sys/mount.h>
 #include <sys/ioccom.h>
-#include <vfs/vfs_support.h>
-#include <sys/namei.h>
-#include <sys/vnode.h>
-#include <sys/vnode_if.h>
-#include <sys/param.h>
+#include <libkern/libkern.h>
+#include <kern/debug.h>
 
 #include "webdav.h"
 
@@ -451,27 +453,59 @@ int webdav_sendmsg(int vnop, struct webdavmount *fmp,
 /*****************************************************************************/
 
 static
+void webdav_purge_stale_vnode(vnode_t vp)
+{
+	/* get the vnode out of the name cache now so subsequent lookups won't find it */
+	cache_purge(vp);
+	/* remove the inode from the hash table */
+	webdav_hashrem(VTOWEBDAV(vp));
+	/* recycle the vnode --  we don't care if the recycle was done or not */
+	(void) vnode_recycle(vp);
+}
+
+/*****************************************************************************/
+
+static
 int webdav_lookup(struct vnop_lookup_args *ap, struct webdav_reply_lookup *reply_lookup)
 {
 	int error;
 	int server_error;
 	struct webdav_request_lookup request_lookup;
+	struct componentname *cnp;
+	int nameiop;
+	
+	cnp = ap->a_cnp;
+	nameiop = cnp->cn_nameiop;
 	
 	/* set up the request */
 	webdav_copy_creds(ap->a_context, &request_lookup.pcr);
-	request_lookup.dir = VTOWEBDAV(ap->a_dvp)->pt_obj_ref;
-	request_lookup.name_length = ap->a_cnp->cn_namelen;
+	request_lookup.dir_id = VTOWEBDAV(ap->a_dvp)->pt_obj_id;
+	/* don't use a cached lookup if the operation is create or rename and this is name being created (or renamed to) */
+	request_lookup.force_lookup = ((nameiop == CREATE || nameiop == RENAME) && (cnp->cn_flags & ISLASTCN));
+	request_lookup.name_length = cnp->cn_namelen;
 
 	server_error = 0;
 	bzero(reply_lookup, sizeof(struct webdav_reply_lookup));
 	
 	error = webdav_sendmsg(WEBDAV_LOOKUP, VFSTOWEBDAV(vnode_mount(ap->a_dvp)),
 		&request_lookup, offsetof(struct webdav_request_lookup, name), 
-		ap->a_cnp->cn_nameptr, ap->a_cnp->cn_namelen,
+		cnp->cn_nameptr, cnp->cn_namelen,
 		&server_error, reply_lookup, sizeof(struct webdav_reply_lookup));
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(ap->a_dvp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 	
 	return ( error );
@@ -485,7 +519,7 @@ int webdav_get(
 	vnode_t dvp,				/* parent vnode */
 	int markroot,				/* if 1, mark as root vnode */
 	struct componentname *cnp,  /* componentname */
-	object_ref obj_ref,			/* object's object_ref */
+	opaque_id obj_id,			/* object's opaque_id */
 	ino_t obj_fileid,			/* object's file ID number */
 	enum vtype obj_vtype,		/* VREG or VDIR */
 	struct timespec obj_atime,  /* time of last access */
@@ -535,14 +569,14 @@ int webdav_get(
 		new_pt->pt_parent = dvp;
 		new_pt->pt_vnode = NULLVP;
 		new_pt->pt_cache_vnode = NULLVP;
-		new_pt->pt_obj_ref = obj_ref;
+		new_pt->pt_obj_id = obj_id;
 		new_pt->pt_fileid = obj_fileid;
 		new_pt->pt_atime = obj_atime;
 		new_pt->pt_mtime = obj_mtime;
 		new_pt->pt_ctime = obj_ctime;
 		new_pt->pt_filesize = obj_filesize;
 		SET(new_pt->pt_status, WEBDAV_INIT);
-		new_pt->pt_diropencount = 0;
+		new_pt->pt_opencount = 0;
 		webdav_hashins(new_pt);
 		
 		/* Create the vnode */
@@ -691,7 +725,7 @@ static int webdav_vnop_lookup(struct vnop_lookup_args *ap)
 				{
 					/* synthesize the lookup reply for dot and dotdot */
 					pt = isdot ? VTOWEBDAV(dvp) : VTOWEBDAV(VTOWEBDAV(dvp)->pt_parent);
-					reply_lookup.obj_ref = pt->pt_obj_ref;
+					reply_lookup.obj_id = pt->pt_obj_id;
 					reply_lookup.obj_fileid = pt->pt_fileid;
 					reply_lookup.obj_type = WEBDAV_DIR_TYPE;
 					reply_lookup.obj_atime = pt->pt_atime;
@@ -704,19 +738,22 @@ static int webdav_vnop_lookup(struct vnop_lookup_args *ap)
 					error = webdav_lookup(ap, &reply_lookup);
 					if ( error != 0 )
 					{
-						/*
-						 * If we get here we didn't find the entry we were looking for. But
-						 * that's ok if we are creating or renaming and are at the end of
-						 * the pathname.
-						 */
-						if ( (nameiop == CREATE || nameiop == RENAME) && islastcn )
+						if ( error != ERESTART )
 						{
-							error = EJUSTRETURN;
-						}
-						else
-						{
-							/* the lookup failed, return ENOENT */
-							error = ENOENT;
+							/*
+							 * If we get here we didn't find the entry we were looking for. But
+							 * that's ok if we are creating or renaming and are at the end of
+							 * the pathname.
+							 */
+							if ( (nameiop == CREATE || nameiop == RENAME) && islastcn )
+							{
+								error = EJUSTRETURN;
+							}
+							else
+							{
+								/* the lookup failed, return ENOENT */
+								error = ENOENT;
+							}
 						}
 						
 						break;	/* break with error != 0 */
@@ -786,7 +823,7 @@ static int webdav_vnop_lookup(struct vnop_lookup_args *ap)
 				}
 				else
 				{
-					error = webdav_get(vnode_mount(dvp), dvp, 0, cnp, reply_lookup.obj_ref, reply_lookup.obj_fileid,
+					error = webdav_get(vnode_mount(dvp), dvp, 0, cnp, reply_lookup.obj_id, reply_lookup.obj_fileid,
 						(reply_lookup.obj_type == WEBDAV_FILE_TYPE) ? VREG : VDIR,
 						reply_lookup.obj_atime, reply_lookup.obj_mtime, reply_lookup.obj_ctime,
 						reply_lookup.obj_filesize, vpp);
@@ -841,6 +878,14 @@ static int webdav_vnop_open(struct vnop_open_args *ap)
 	 */
 	if (pt->pt_cache_vnode)
 	{
+		/* increment the open count */
+		++pt->pt_opencount;
+		if ( pt->pt_opencount == 0 )
+		{
+			/* don't wrap -- return an error */
+			--pt->pt_opencount;
+			return ( ENFILE );
+		}
 		/* Set the "dir not loaded" bit if this is a directory, that way
 		 * readdir will know that it needs to force a directory download
 		 * even if the first call turns out not to be in the middle of the
@@ -849,14 +894,6 @@ static int webdav_vnop_open(struct vnop_open_args *ap)
 		if (vnode_vtype(vp) == VDIR)
 		{
 			pt->pt_status |= WEBDAV_DIR_NOT_LOADED;
-			/* increment the directory's open count */
-			++pt->pt_diropencount;
-			if ( pt->pt_diropencount == 0 )
-			{
-				/* don't wrap -- return an error */
-				--pt->pt_diropencount;
-				return ( ENFILE );
-			}
 		}
 		return (0);
 	}
@@ -865,7 +902,7 @@ static int webdav_vnop_open(struct vnop_open_args *ap)
 
 	webdav_copy_creds(ap->a_context, &request_open.pcr);
 	request_open.flags = OFLAGS(ap->a_mode);
-	request_open.obj_ref = pt->pt_obj_ref;
+	request_open.obj_id = pt->pt_obj_id;
 	
 	if ( !vnode_isreg(vp) && !vnode_isdir(vp) )
 	{
@@ -891,7 +928,19 @@ static int webdav_vnop_open(struct vnop_open_args *ap)
 		&server_error, &reply_open, sizeof(struct webdav_reply_open));
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(vp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 	
 	if (error == 0)
@@ -905,6 +954,9 @@ static int webdav_vnop_open(struct vnop_open_args *ap)
 		}
 		pt->pt_cache_vnode = associatecachefile.cachevp;
 
+		/* set the open count */
+		pt->pt_opencount = 1;
+		
 		/* Set the "dir not loaded" bit if this is a directory, that way
 		 * readdir will know that it needs to force a directory download
 		 * even if the first call turns out not to be in the middle of the
@@ -915,8 +967,6 @@ static int webdav_vnop_open(struct vnop_open_args *ap)
 			pt->pt_status |= WEBDAV_DIR_NOT_LOADED;
 			/* default to not ask for and to not cache additional directory information */
 			vnode_setnocache(vp);
-			/* set the directory's open count */
-			pt->pt_diropencount = 1;
 		}
 	}
 
@@ -1085,7 +1135,7 @@ static int webdav_fsync(struct vnop_fsync_args *ap)
 	pt->pt_status &= ~WEBDAV_DIRTY;
 	
 	webdav_copy_creds(ap->a_context, &request_fsync.pcr);
-	request_fsync.obj_ref = pt->pt_obj_ref;
+	request_fsync.obj_id = pt->pt_obj_id;
 
 	error = webdav_sendmsg(WEBDAV_FSYNC, fmp,
 		&request_fsync, sizeof(struct webdav_request_fsync), 
@@ -1093,7 +1143,19 @@ static int webdav_fsync(struct vnop_fsync_args *ap)
 		&server_error, NULL, 0);
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(vp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 
 done:
@@ -1175,7 +1237,7 @@ int webdav_close_mnomap(vnode_t vp, vfs_context_t context, int force_fsync)
 		 * and when the file is not open (at last close, and from mnomap after
 		 * last close).
 		 */
-		if ( vnode_isreg(vp) && (force_fsync || !vnode_isinuse(vp, 1)) )
+		if ( vnode_isreg(vp) && (force_fsync || (pt->pt_opencount == 0)) )
 		{
 			struct vnop_fsync_args fsync_args;
 			
@@ -1183,6 +1245,10 @@ int webdav_close_mnomap(vnode_t vp, vfs_context_t context, int force_fsync)
 			fsync_args.a_waitfor = TRUE;
 			fsync_args.a_context = context;
 			fsync_error = webdav_fsync(&fsync_args);
+			if ( fsync_error == ERESTART )
+			{
+				goto done;
+			}
 		}
 		
 		/*
@@ -1190,19 +1256,14 @@ int webdav_close_mnomap(vnode_t vp, vfs_context_t context, int force_fsync)
 		 * mean the data was not correctly written in userland.
 		 */
 		 
-		if ( vnode_isdir(vp) )
-		{
-			--pt->pt_diropencount;
-		}
-		
 		/* If this the last close and we're not mapped, tell mount_webdav */
-		if ( !vnode_isinuse(vp, 1) || (vnode_isdir(vp) && (pt->pt_diropencount == 0)) )
+		if ( (pt->pt_opencount == 0) && !(pt->pt_status & WEBDAV_ISMAPPED) )
 		{
 			struct webdav_request_close request_close;
 			vnode_t temp;
 			
 			webdav_copy_creds(context, &request_close.pcr);
-			request_close.obj_ref = pt->pt_obj_ref;
+			request_close.obj_id = pt->pt_obj_id;
 
 			error = webdav_sendmsg(WEBDAV_CLOSE, VFSTOWEBDAV(vnode_mount(vp)),
 				&request_close, sizeof(struct webdav_request_close), 
@@ -1210,7 +1271,20 @@ int webdav_close_mnomap(vnode_t vp, vfs_context_t context, int force_fsync)
 				&server_error, NULL, 0);
 			if ( (error == 0) && (server_error != 0) )
 			{
-				error = server_error;
+				if ( server_error == ESTALE )
+				{
+					/*
+					 * The object id(s) passed to userland are invalid.
+					 * Purge the vnode(s) and restart the request.
+					 */
+					webdav_purge_stale_vnode(vp);
+					error = ERESTART;
+					goto done;
+				}
+				else
+				{
+					error = server_error;
+				}
 			}
 
 			/* zero out pt_cache_vnode and then release the cache vnode */
@@ -1224,7 +1298,9 @@ int webdav_close_mnomap(vnode_t vp, vfs_context_t context, int force_fsync)
 		/* no cache file. Why? */
 		printf("webdav_close_mnomap: no cache file\n");
 	}
-	
+
+done:
+
 	/* report any errors */
 	if ( error == 0 )
 	{
@@ -1267,6 +1343,9 @@ static int webdav_vnop_close(struct vnop_close_args *ap)
 	 */
 	force_fsync = (((ap->a_fflag & FWRITE) != 0) && vnode_isreg(ap->a_vp));
 	
+	/* decrement the open count */
+	--pt->pt_opencount;
+	
 	RET_ERR("webdav_vnop_close", webdav_close_mnomap(ap->a_vp, ap->a_context, force_fsync));
 }
 
@@ -1285,7 +1364,7 @@ static int webdav_vnop_mmap(struct vnop_mmap_args *ap)
 	/* mark this file as mapped */
 	START_MARKER("webdav_vnop_mmap");
 
-	VTOWEBDAV(ap->a_vp)->pt_status |= WEBDAV_WASMAPPED;
+	VTOWEBDAV(ap->a_vp)->pt_status |= (WEBDAV_ISMAPPED | WEBDAV_WASMAPPED);
 	
 	RET_ERR("webdav_vnop_mmap", 0);
 }
@@ -1302,6 +1381,9 @@ static int webdav_vnop_mnomap(struct vnop_mnomap_args *ap)
 */
 {
 	START_MARKER("webdav_vnop_mnomap");
+	
+	/* mark this file as unmapped */
+	VTOWEBDAV(ap->a_vp)->pt_status &= ~WEBDAV_ISMAPPED;
 	
 	/* if the file is not open, this will fsync it and close it in user-land */
 	RET_ERR("webdav_vnop_mnomap", webdav_close_mnomap(ap->a_vp, ap->a_context, FALSE));
@@ -1357,7 +1439,7 @@ static int webdav_read_bytes(vnode_t vp, uio_t a_uio, vfs_context_t context)
 	MALLOC(buffer, void *, request_read.count, M_TEMP, M_WAITOK);
 
 	webdav_copy_creds(context, &request_read.pcr);
-	request_read.obj_ref = pt->pt_obj_ref;
+	request_read.obj_id = pt->pt_obj_id;
 	request_read.offset = uio_offset(a_uio);
 
 	error = webdav_sendmsg(WEBDAV_READ, fmp,
@@ -1366,7 +1448,19 @@ static int webdav_read_bytes(vnode_t vp, uio_t a_uio, vfs_context_t context)
 		&server_error, buffer, request_read.count);
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(vp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 	if (error)
 	{
@@ -1994,7 +2088,7 @@ static int webdav_vnop_getattr(struct vnop_getattr_args *ap)
 	{
 		/* get the server file's information */
 		webdav_copy_creds(ap->a_context, &request_getattr.pcr);
-		request_getattr.obj_ref = pt->pt_obj_ref;
+		request_getattr.obj_id = pt->pt_obj_id;
 		
 		error = webdav_sendmsg(WEBDAV_GETATTR, fmp,
 			&request_getattr, sizeof(struct webdav_request_getattr), 
@@ -2002,7 +2096,19 @@ static int webdav_vnop_getattr(struct vnop_getattr_args *ap)
 			&server_error, &reply_getattr, sizeof(struct webdav_reply_getattr));
 		if ( (error == 0) && (server_error != 0) )
 		{
-			error = server_error;
+			if ( server_error == ESTALE )
+			{
+				/*
+				 * The object id(s) passed to userland are invalid.
+				 * Purge the vnode(s) and restart the request.
+				 */
+				webdav_purge_stale_vnode(vp);
+				error = ERESTART;
+			}
+			else
+			{
+				error = server_error;
+			}
 		}
 		if (error)
 		{
@@ -2123,7 +2229,7 @@ static int webdav_vnop_remove(struct vnop_remove_args *ap)
 	cache_purge(vp);
 
 	webdav_copy_creds(ap->a_context, &request_remove.pcr);
-	request_remove.obj_ref = pt->pt_obj_ref;
+	request_remove.obj_id = pt->pt_obj_id;
 
 	error = webdav_sendmsg(WEBDAV_REMOVE, fmp,
 		&request_remove, sizeof(struct webdav_request_remove), 
@@ -2131,7 +2237,19 @@ static int webdav_vnop_remove(struct vnop_remove_args *ap)
 		&server_error, NULL, 0);
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(vp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 	if (error)
 	{
@@ -2199,7 +2317,7 @@ static int webdav_vnop_rmdir(struct vnop_rmdir_args *ap)
 	cache_purge(vp);
 
 	webdav_copy_creds(ap->a_context, &request_rmdir.pcr);
-	request_rmdir.obj_ref = pt->pt_obj_ref;
+	request_rmdir.obj_id = pt->pt_obj_id;
 
 	error = webdav_sendmsg(WEBDAV_RMDIR, fmp,
 		&request_rmdir, sizeof(struct webdav_request_rmdir), 
@@ -2207,7 +2325,19 @@ static int webdav_vnop_rmdir(struct vnop_rmdir_args *ap)
 		&server_error, NULL, 0);
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(vp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 	if (error)
 	{
@@ -2266,7 +2396,7 @@ static int webdav_vnop_create(struct vnop_create_args *ap)
 	}
 
 	webdav_copy_creds(ap->a_context, &request_create.pcr);
-	request_create.dir = VTOWEBDAV(dvp)->pt_obj_ref;
+	request_create.dir_id = VTOWEBDAV(dvp)->pt_obj_id;
 	request_create.mode = ap->a_vap->va_mode;
 	request_create.name_length = cnp->cn_namelen;
 
@@ -2278,7 +2408,19 @@ static int webdav_vnop_create(struct vnop_create_args *ap)
 		&server_error, &reply_create, sizeof(struct webdav_reply_create));
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(dvp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 	if (error)
 	{
@@ -2292,7 +2434,7 @@ static int webdav_vnop_create(struct vnop_create_args *ap)
 	TIMEVAL_TO_TIMESPEC(&tv, &ts);
 	
 	error = webdav_get(vnode_mount(dvp), dvp, 0, cnp,
-		reply_create.obj_ref, reply_create.obj_fileid, VREG, ts, ts, ts, 0, vpp);
+		reply_create.obj_id, reply_create.obj_fileid, VREG, ts, ts, ts, 0, vpp);
 	if (error)
 	{
 		/* nothing we can do except complain */
@@ -2339,10 +2481,10 @@ static int webdav_vnop_rename(struct vnop_rename_args *ap)
 	cache_purge(fvp);
 	
 	webdav_copy_creds(ap->a_context, &request_rename.pcr);	
-	request_rename.from_dir_ref = VTOWEBDAV(fdvp)->pt_obj_ref;
-	request_rename.from_obj_ref = VTOWEBDAV(fvp)->pt_obj_ref;
-	request_rename.to_dir_ref = VTOWEBDAV(tdvp)->pt_obj_ref;
-	request_rename.to_obj_ref = (tvp != NULLVP) ? VTOWEBDAV(tvp)->pt_obj_ref : 0;
+	request_rename.from_dir_id = VTOWEBDAV(fdvp)->pt_obj_id;
+	request_rename.from_obj_id = VTOWEBDAV(fvp)->pt_obj_id;
+	request_rename.to_dir_id = VTOWEBDAV(tdvp)->pt_obj_id;
+	request_rename.to_obj_id = (tvp != NULLVP) ? VTOWEBDAV(tvp)->pt_obj_id : 0;
 	request_rename.to_name_length = tcnp->cn_namelen;
 
 	error = webdav_sendmsg(WEBDAV_RENAME, VFSTOWEBDAV(vnode_mount(fvp)),
@@ -2351,7 +2493,26 @@ static int webdav_vnop_rename(struct vnop_rename_args *ap)
 		&server_error, NULL, 0);
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(fdvp);
+			webdav_purge_stale_vnode(fvp);
+			webdav_purge_stale_vnode(tdvp);
+			if ( tvp != NULLVP )
+			{
+				webdav_purge_stale_vnode(tvp);
+			}
+			error = ERESTART;
+			goto done;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 
 	if ( tvp != NULLVP )
@@ -2373,6 +2534,8 @@ static int webdav_vnop_rename(struct vnop_rename_args *ap)
 	/* parent directories may have changed (even if error) so force readdir to reload */
 	VTOWEBDAV(fdvp)->pt_status |= WEBDAV_DIR_NOT_LOADED;
 	VTOWEBDAV(tdvp)->pt_status |= WEBDAV_DIR_NOT_LOADED;
+
+done:
 
 	RET_ERR("webdav_vnop_rename", error);
 }
@@ -2417,7 +2580,7 @@ static int webdav_vnop_mkdir(struct vnop_mkdir_args *ap)
 	}
 
 	webdav_copy_creds(ap->a_context, &request_mkdir.pcr);
-	request_mkdir.dir = VTOWEBDAV(dvp)->pt_obj_ref;
+	request_mkdir.dir_id = VTOWEBDAV(dvp)->pt_obj_id;
 	request_mkdir.mode = ap->a_vap->va_mode;
 	request_mkdir.name_length = cnp->cn_namelen;
 
@@ -2429,7 +2592,19 @@ static int webdav_vnop_mkdir(struct vnop_mkdir_args *ap)
 		&server_error, &reply_mkdir, sizeof(struct webdav_reply_mkdir));
 	if ( (error == 0) && (server_error != 0) )
 	{
-		error = server_error;
+		if ( server_error == ESTALE )
+		{
+			/*
+			 * The object id(s) passed to userland are invalid.
+			 * Purge the vnode(s) and restart the request.
+			 */
+			webdav_purge_stale_vnode(dvp);
+			error = ERESTART;
+		}
+		else
+		{
+			error = server_error;
+		}
 	}
 	if (error)
 	{
@@ -2444,7 +2619,7 @@ static int webdav_vnop_mkdir(struct vnop_mkdir_args *ap)
 	microtime(&tv);
 	
 	error = webdav_get(vnode_mount(dvp), dvp, 0, cnp,
-		reply_mkdir.obj_ref, reply_mkdir.obj_fileid, VDIR, ts, ts, ts, fmp->pm_dir_size, vpp);
+		reply_mkdir.obj_id, reply_mkdir.obj_fileid, VDIR, ts, ts, ts, fmp->pm_dir_size, vpp);
 	if (error)
 	{
 		/* nothing we can do except complain */
@@ -2685,7 +2860,7 @@ static int webdav_vnop_readdir(struct vnop_readdir_args *ap)
 		struct webdav_request_readdir request_readdir;
 		
 		webdav_copy_creds(ap->a_context, &request_readdir.pcr);
-		request_readdir.obj_ref = pt->pt_obj_ref;
+		request_readdir.obj_id = pt->pt_obj_id;
 		request_readdir.cache = !vnode_isnocache(vp);
 
 		error = webdav_sendmsg(WEBDAV_READDIR, fmp,
@@ -2694,7 +2869,19 @@ static int webdav_vnop_readdir(struct vnop_readdir_args *ap)
 			&server_error, NULL, 0);
 		if ( (error == 0) && (server_error != 0) )
 		{
-			error = server_error;
+			if ( server_error == ESTALE )
+			{
+				/*
+				 * The object id(s) passed to userland are invalid.
+				 * Purge the vnode(s) and restart the request.
+				 */
+				webdav_purge_stale_vnode(vp);
+				error = ERESTART;
+			}
+			else
+			{
+				error = server_error;
+			}
 		}
 		if (error)
 		{
@@ -2806,7 +2993,7 @@ static int webdav_vnop_reclaim(struct vnop_reclaim_args *ap)
 	
 	/*
 	 * In case we block during FREE_ZONEs below, get the entry out
-	 * of tbe name cache now so subsequent lookups won't find it.
+	 * of the name cache now so subsequent lookups won't find it.
 	 */
 	cache_purge(vp);
 	
