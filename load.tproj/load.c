@@ -25,6 +25,7 @@
 #include <sys/wait.h>
 #include <sys/errno.h>
 #include <unistd.h>
+#include <stdio.h>
 
 /*****************************************************************************/
 
@@ -32,6 +33,8 @@
 
 #define LOAD_COMMAND "/sbin/kextload"
 #define WEBDAV_MODULE_PATH "/System/Library/Extensions/webdav_fs.kext"
+#define CFENVFORMATSTRING "__CF_USER_TEXT_ENCODING=0x%X:0:0"
+
 
 /*****************************************************************************/
 
@@ -45,7 +48,18 @@ int main(int argc, const char *argv[])
 	pid = fork();
 	if (pid == 0)
 	{
-		result = execl(LOAD_COMMAND, LOAD_COMMAND, WEBDAV_MODULE_PATH, NULL);
+		char CFUserTextEncodingEnvSetting[sizeof(CFENVFORMATSTRING) + 20]; 
+		char *env[] = {CFUserTextEncodingEnvSetting, "", (char *) 0 };
+		
+		/* 
+		 * Create a new environment with a definition of __CF_USER_TEXT_ENCODING to work 
+		 * around CF's interest in the user's home directory (which could be networked, 
+		 * causing recursive references through automount). Make sure we include the uid
+		 * since CF will check for this when deciding if to look in the home directory.
+		 */ 
+		snprintf(CFUserTextEncodingEnvSetting, sizeof(CFUserTextEncodingEnvSetting), CFENVFORMATSTRING, getuid());
+
+		result = execle(LOAD_COMMAND, LOAD_COMMAND, WEBDAV_MODULE_PATH, NULL, env);
 		/* We can only get here if the exec failed */
 		goto Return;
 	}

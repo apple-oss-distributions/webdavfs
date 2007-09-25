@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -21,29 +21,15 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef _WEBDAV_REQUESTQUEUE_H_INCLUDE
-#define _WEBDAV_REQUESTQUEUE_H_INCLUDE
+#ifndef __WEBDAV_UTILS__
+#define __WEBDAV_UTILS__
 
-#include <sys/types.h>
-#include <pthread.h>
-#include <mach/boolean.h>
-#include <unistd.h>
+#include "webdav.h"
 
-#include "webdav_cache.h"
-#include "webdav_network.h"
+enum webdavlocktype  {WEBDAV_SHARED_LOCK = 1, WEBDAV_EXCLUSIVE_LOCK = 2};
 
-/* Functions */
-#define WEBDAV_CONNECTION_UP 1
-#define WEBDAV_CONNECTION_DOWN 0
-extern int get_connectionstate(void);
-extern void set_connectionstate(int bad);
-
-extern int requestqueue_init(void);
-extern int requestqueue_enqueue_request(int socket);
-extern int requestqueue_enqueue_download(
-			struct node_entry *node,			/* the node */
-			struct ReadStreamRec *readStreamRecPtr); /* the ReadStreamRec */
-extern int requestqueue_enqueue_server_ping(u_int32_t delay);
-extern int requestqueue_purge_cache_files(void);
+/* single */
+int webdav_lock(struct webdavnode *pt, enum webdavlocktype locktype);
+void webdav_unlock(struct webdavnode *pt);
 
 #endif
