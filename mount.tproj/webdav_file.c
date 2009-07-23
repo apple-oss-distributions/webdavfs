@@ -42,6 +42,11 @@
 #include "LogMessage.h"
 
 /*****************************************************************************/
+// The maximum size of an upload or download to allow the
+// system to cache.
+extern uint64_t webdavCacheMaximumSize;
+
+/*****************************************************************************/
 
 #define WEBDAV_STATFS_TIMEOUT 60	/* Number of seconds statfs_cache_buffer is valid */
 static time_t statfs_cache_time;
@@ -74,7 +79,7 @@ static int get_cachefile(int *fd)
 	int retrycount;
 	
 	error = 0;
-	
+
 	error = pthread_mutex_lock(&webdav_cachefile_lock);
 	require_noerr_action(error, pthread_mutex_lock, webdav_kill(-1));
 	
@@ -393,6 +398,13 @@ int filesystem_close(struct webdav_request_close *request_close)
 
 	/* set the file_inactive_time  */
 	time(&node->file_inactive_time);
+
+	/* if file was written sequentially, clean up the context that's hanging around */
+	if ( node->put_ctx != NULL ) {
+		error = cleanup_seq_write(node->put_ctx);
+		free (node->put_ctx);
+		node->put_ctx = NULL;
+	}
 	
 	/* if the file was locked, unlock it */
 	if ( node->file_locktoken  )
@@ -410,7 +422,7 @@ int filesystem_close(struct webdav_request_close *request_close)
 			}
 		}
 	}
-		
+
 	/*
 	 * If something went wrong with this file, it was deleted, or it is
 	 * a directory, then remove it from the file cache.
@@ -435,9 +447,20 @@ int filesystem_lookup(struct webdav_request_lookup *request_lookup, struct webda
 	struct node_entry *parent_node;
 	struct stat statbuf;
 	int lookup;
+	CFStringRef name_string;
 	
 	node = NULL;
 
+	// First make sure the name being looked up is valid UTF-8
+	if ( request_lookup->name != NULL && request_lookup->name_length != 0)
+	{
+		name_string = CFStringCreateWithBytes(kCFAllocatorDefault, (const UInt8 *)request_lookup->name,
+												request_lookup->name_length,
+												kCFStringEncodingUTF8, false);
+		require_action(name_string != NULL, out, error = EINVAL);
+		CFRelease(name_string);
+	}
+	
 	error = RetrieveDataFromOpaqueID(request_lookup->dir_id, (void **)&parent_node);
 	require_noerr_action_quiet(error, bad_obj_id, error = ESTALE);
 	
@@ -451,8 +474,8 @@ int filesystem_lookup(struct webdav_request_lookup *request_lookup, struct webda
 		error = nodecache_get_node(parent_node, request_lookup->name_length, request_lookup->name, FALSE, FALSE, 0, &node);
 		if ( error )
 		{
-			/* no node but can we skip asking the server? */
-			lookup = !NODE_DIRECTORY_RECENTLY_READ(parent_node);
+			/* no node, ask the server */
+			lookup = TRUE;
 		}
 		else
 		{
@@ -499,14 +522,21 @@ int filesystem_lookup(struct webdav_request_lookup *request_lookup, struct webda
 		reply_lookup->obj_id = node->nodeid;
 		reply_lookup->obj_fileid = node->fileid;
 		reply_lookup->obj_type = node->node_type;
-		reply_lookup->obj_atime = node->attr_stat.st_atimespec;
-		reply_lookup->obj_mtime = node->attr_stat.st_mtimespec;
-		reply_lookup->obj_ctime = node->attr_stat.st_ctimespec;
+		
+		reply_lookup->obj_atime.tv_sec = node->attr_stat.st_atimespec.tv_sec;
+		reply_lookup->obj_atime.tv_nsec = node->attr_stat.st_atimespec.tv_nsec;
+		
+		reply_lookup->obj_mtime.tv_sec = node->attr_stat.st_mtimespec.tv_sec;
+		reply_lookup->obj_mtime.tv_nsec = node->attr_stat.st_mtimespec.tv_nsec;
+		
+		reply_lookup->obj_ctime.tv_sec = node->attr_stat.st_ctimespec.tv_sec;
+		reply_lookup->obj_ctime.tv_nsec = node->attr_stat.st_ctimespec.tv_nsec;
+		
 		reply_lookup->obj_filesize = node->attr_stat.st_size;
 	}
 
 bad_obj_id:
-	
+out:	
 	return (error);
 }
 
@@ -517,6 +547,7 @@ int filesystem_getattr(struct webdav_request_getattr *request_getattr, struct we
 	int error;
 	struct node_entry *node;
 	struct stat statbuf;
+	struct webdav_stat *wstat;
 	
 	error = RetrieveDataFromOpaqueID(request_getattr->obj_id, (void **)&node);
 	require_noerr_action_quiet(error, bad_obj_id, error = ESTALE);
@@ -542,7 +573,30 @@ int filesystem_getattr(struct webdav_request_getattr *request_getattr, struct we
 	if ( !error )
 	{
 		/* we have the attributes cached */
-		bcopy(&node->attr_stat, &reply_getattr->obj_attr, sizeof(struct stat));
+		wstat = &reply_getattr->obj_attr;
+		
+		wstat->st_dev = node->attr_stat.st_dev;
+		wstat->st_ino = (webdav_ino_t) node->attr_stat.st_ino;
+		wstat->st_mode = node->attr_stat.st_mode;
+		wstat->st_nlink = node->attr_stat.st_nlink;
+		wstat->st_uid = node->attr_stat.st_uid;
+		wstat->st_gid = node->attr_stat.st_gid;
+		wstat->st_rdev = node->attr_stat.st_rdev;
+		
+		wstat->st_atimespec.tv_sec = node->attr_stat.st_atimespec.tv_sec;
+		wstat->st_atimespec.tv_nsec = node->attr_stat.st_atimespec.tv_nsec;
+		
+		wstat->st_mtimespec.tv_sec = node->attr_stat.st_mtimespec.tv_sec;
+		wstat->st_mtimespec.tv_nsec = node->attr_stat.st_mtimespec.tv_nsec;
+		
+		wstat->st_ctimespec.tv_sec = node->attr_stat.st_ctimespec.tv_sec;
+		wstat->st_ctimespec.tv_nsec = node->attr_stat.st_ctimespec.tv_nsec;
+		
+		wstat->st_size = node->attr_stat.st_size;
+		wstat->st_blocks = node->attr_stat.st_blocks;
+		wstat->st_blksize = node->attr_stat.st_blksize;
+		wstat->st_flags = node->attr_stat.st_flags;
+		wstat->st_gen = node->attr_stat.st_gen;
 	}
 	
 deleted_node:
@@ -601,7 +655,13 @@ int filesystem_statfs(struct webdav_request_statfs *request_statfs,
 		
 		if ( !error )
 		{
-			bcopy(&statfs_cache_buffer, &reply_statfs->fs_attr, sizeof(struct statfs));
+			reply_statfs->fs_attr.f_bsize = statfs_cache_buffer.f_bsize;
+			reply_statfs->fs_attr.f_iosize = statfs_cache_buffer.f_iosize;
+			reply_statfs->fs_attr.f_blocks = statfs_cache_buffer.f_blocks;
+			reply_statfs->fs_attr.f_bfree = statfs_cache_buffer.f_bfree;
+			reply_statfs->fs_attr.f_bavail = statfs_cache_buffer.f_bavail;
+			reply_statfs->fs_attr.f_files = statfs_cache_buffer.f_files;
+			reply_statfs->fs_attr.f_ffree = statfs_cache_buffer.f_ffree;
 		}
 	}
 
@@ -642,6 +702,13 @@ int filesystem_create(struct webdav_request_create *request_create, struct webda
 	require_action_quiet(!NODE_IS_DELETED(parent_node), deleted_node, error = ESTALE);
 	
 	error = network_create(request_create->pcr.pcr_uid, parent_node, request_create->name, request_create->name_length, &creation_date);
+	
+	// Translate ENOENT to workaround VFS bug:
+	// <rdar://problem/6965993> 10A383: WebDAV FS hangs on open with Microsoft servers (unsupported characters)
+	if (error == ENOENT) {
+		error = EIO;
+	}
+	
 	if ( !error )
 	{
 		/*
@@ -820,8 +887,9 @@ int filesystem_read(struct webdav_request_read *request_read, char **a_byte_addr
 
 	require_action_quiet(!NODE_IS_DELETED(node), deleted_node, error = ESTALE);
 
+	// Note: request_read->count has already been checked for overflow
 	error = network_read(request_read->pcr.pcr_uid, node,
-		request_read->offset, request_read->count, a_byte_addr, a_size);
+		request_read->offset, (size_t)request_read->count, a_byte_addr, a_size);
 
 deleted_node:
 bad_obj_id:
@@ -1117,6 +1185,239 @@ not_open:
 deleted_node:
 bad_obj_id:
 	
+	return ( error );
+}
+
+/*****************************************************************************/
+
+// This function sends a write request to the write manager.  
+// When the request offset is zero, this function also intializes the sequential write engine.
+//
+int filesystem_write_seq(struct webdav_request_writeseq *request_sq_wr)
+{
+	int error;
+	ssize_t bytesRead; 
+	// size_t totalBytesRead;
+	off_t totalBytesRead;
+	off_t nbytes;
+	struct node_entry *node;
+	struct stream_put_ctx *ctx = NULL;
+	struct seqwrite_mgr_req *mgr_req;
+	struct timespec timeout;
+	pthread_mutexattr_t mutexattr;
+	
+	mgr_req = NULL;
+	error = 0;
+	
+	error = RetrieveDataFromOpaqueID(request_sq_wr->obj_id, (void **)&node);
+	require_noerr_action_quiet(error, out1, error = ESTALE);
+
+	/* File size is a hint, can't be trusted */
+	/* number of bytes to be written can be 0, so no need to check */
+	require_action_quiet(!NODE_IS_DELETED(node), out1, error = ESTALE);
+		
+	/* Trying to write something that's not open? */
+	require_action(NODE_FILE_IS_CACHED(node), out1, error = EBADF);
+	
+	if ( request_sq_wr->offset == 0 ) {
+		error = setup_seq_write(request_sq_wr->pcr.pcr_uid, node, request_sq_wr->file_len);
+		
+		// If file is large, turn off data caching during the upload
+		if( request_sq_wr->file_len > webdavCacheMaximumSize)
+			fcntl(node->file_fd, F_NOCACHE, 1);
+	}
+	
+	if (error) {
+		syslog(LOG_ERR, "%s: setup_seq_write returned %d\n", __FUNCTION__, error);
+		goto out1;	
+	}
+	
+	ctx = node->put_ctx;
+	if (request_sq_wr->is_retry)
+		ctx->is_retry = 1;
+	
+	// syslog(LOG_DEBUG, "%s: entered. offset %llu, count %lu\n", __FUNCTION__, request_sq_wr->offset, request_sq_wr->count);
+	
+	pthread_mutex_lock(&ctx->ctx_lock);
+	/* Set request data which is common across all requests for this call */
+	
+	mgr_req = (struct seqwrite_mgr_req *) malloc (sizeof(struct seqwrite_mgr_req));	
+	if (mgr_req == NULL) {
+		syslog(LOG_ERR, "%s: malloc of seqwrite_mgr_req failed", __FUNCTION__);
+		ctx->finalStatus = EIO;
+		ctx->finalStatusValid = true;
+		error = EIO;
+		pthread_mutex_unlock(&ctx->ctx_lock);
+		goto out1;
+	}
+	
+	bzero(mgr_req, sizeof(struct seqwrite_mgr_req));
+	mgr_req->refCount = 1;	// hold a reference until were done
+	mgr_req->req = request_sq_wr;
+	mgr_req->is_retry = request_sq_wr->is_retry;	
+	mgr_req->data = (unsigned char *)malloc(BODY_BUFFER_SIZE); /* 64K */
+	if ( mgr_req->data == NULL ) {
+		syslog(LOG_ERR, "%s: malloc of data buffer failed", __FUNCTION__);
+		ctx->finalStatus = EIO;
+		ctx->finalStatusValid = true;
+		error = EIO;
+		pthread_mutex_unlock(&ctx->ctx_lock);
+		goto out1;
+	}
+	
+	error = pthread_mutexattr_init(&mutexattr);
+	if (error) {
+		syslog(LOG_ERR, "%s: init ctx mutexattr failed, error %d", __FUNCTION__, error);
+		ctx->finalStatus = EIO;
+		ctx->finalStatusValid = true;
+		error = EIO;
+		pthread_mutex_unlock(&ctx->ctx_lock);
+		goto out1;
+	}
+	
+	error = pthread_mutex_init(&mgr_req->req_lock, &mutexattr);
+	if (error) {
+		syslog(LOG_ERR, "%s: init ctx_lock failed, error %d", __FUNCTION__, error);
+		ctx->finalStatus = EIO;
+		ctx->finalStatusValid = true;
+		error = EIO;
+		pthread_mutex_unlock(&ctx->ctx_lock);
+		goto out1;
+	}
+	
+	error = pthread_cond_init(&mgr_req->req_condvar, NULL);
+	if (error) {
+		syslog(LOG_ERR, "%s: init ctx_condvar failed, error %d", __FUNCTION__, error);
+		ctx->finalStatus = EIO;
+		ctx->finalStatusValid = true;
+		error = EIO;
+		pthread_mutex_unlock(&ctx->ctx_lock);
+		goto out1;
+	}
+	
+	if (node->file_fd == -1) 
+	{
+		/* cache file's no good, today just isn't our day */
+		syslog(LOG_ERR, "%s: cache file descriptor is -1, failed.", __FUNCTION__ );
+		ctx->finalStatus = EIO;
+		ctx->finalStatusValid = true;
+		error = EIO;
+		pthread_mutex_unlock(&ctx->ctx_lock);
+		goto out1;
+	}
+	
+	// Seek to the start of this offset
+	if ( lseek(node->file_fd, request_sq_wr->offset, SEEK_SET) < 0) {
+			/* seek failed, dammit */
+			syslog(LOG_ERR, "%s: lseek errno %d, failed.", __FUNCTION__, errno);
+			ctx->finalStatus = EIO;
+			ctx->finalStatusValid = true;
+			error = EIO;
+			pthread_mutex_unlock(&ctx->ctx_lock);
+			goto out1;
+		}
+
+	pthread_mutex_unlock(&ctx->ctx_lock);
+	
+	totalBytesRead = 0, bytesRead = 0;
+	/* Loop until everything's written or an error occurs */
+	while( 1 ) {
+		pthread_mutex_lock(&ctx->ctx_lock);
+		
+		// if the sequential write was cancelled, get outta dodge
+		if ( ctx->mgr_status == WR_MGR_DONE || ctx->finalStatusValid == true ) {
+			// sequential write was cancelled
+			// syslog(LOG_DEBUG, "%s: WRITESEQ: cancelled at top of loop mgr_status %d, finalStatusValid %d",
+			//	__FUNCTION__, ctx->mgr_status == WR_MGR_DONE, ctx->finalStatusValid);
+			error = ctx->finalStatus;
+			pthread_mutex_unlock(&ctx->ctx_lock);
+			goto out1;
+		}
+		
+		// If we're done reading, break
+		if ( totalBytesRead >= request_sq_wr->count ) {
+			pthread_mutex_unlock(&ctx->ctx_lock);
+			break;
+		}
+		
+		nbytes = MIN( request_sq_wr->count - totalBytesRead, BODY_BUFFER_SIZE );
+
+		bytesRead = read( node->file_fd, mgr_req->data, (size_t)nbytes );
+		
+		/* bytesRead < 0 we got an error */
+		if ( bytesRead < 0 ) {
+			syslog(LOG_ERR, "%s: read() cache file returned error %d, failed.", __FUNCTION__, errno);
+			error = errno;
+			ctx->finalStatus = error;
+			ctx->finalStatusValid = true;
+			pthread_mutex_unlock(&ctx->ctx_lock);
+			goto out1;
+		}
+		
+		mgr_req->type = SEQWRITE_CHUNK;
+		mgr_req->request_done = false;
+		mgr_req->chunkLen = bytesRead;
+		mgr_req->chunkWritten = false;
+		mgr_req->error = 0;
+		
+		// queue request
+		if (queue_writemgr_request_locked(ctx, mgr_req) < 0) {
+			syslog(LOG_ERR, "%s: queue_writemgr_request_locked failed.", __FUNCTION__);
+			error = EIO;
+			ctx->finalStatus = error;
+			ctx->finalStatusValid = true;
+			pthread_mutex_unlock(&ctx->ctx_lock);
+			goto out1;
+		}
+		
+		pthread_mutex_unlock(&ctx->ctx_lock);
+		
+		timeout.tv_sec = time(NULL) + WEBDAV_WRITESEQ_REQUEST_TIMEOUT;
+		timeout.tv_nsec = 0;
+		
+		// now wait on condition var until mgr is done with this request
+		pthread_mutex_lock(&mgr_req->req_lock);
+		/* wait for request to finish */
+		while (mgr_req->request_done == false && ctx->finalStatusValid == false) {
+			error = pthread_cond_timedwait(&mgr_req->req_condvar, &mgr_req->req_lock, &timeout);	
+			if ( error != 0 ) {
+				syslog(LOG_ERR, "%s: pthread_cond_timedwait returned error %d, failed.", __FUNCTION__, error);
+				pthread_mutex_lock(&ctx->ctx_lock);
+				if ( error == ETIMEDOUT ) {
+					ctx->finalStatus = ETIMEDOUT;
+					ctx->finalStatusValid = true;
+				} else {
+					ctx->finalStatus = EIO;
+					ctx->finalStatusValid = true;
+					error = EIO;
+				}
+				pthread_mutex_unlock(&ctx->ctx_lock);
+				pthread_mutex_unlock(&mgr_req->req_lock);
+				goto out1;
+			}
+		}
+		pthread_mutex_unlock(&mgr_req->req_lock);
+		totalBytesRead += bytesRead;
+	}	
+	
+	if (mgr_req->request_done == true) {
+		error = mgr_req->error;
+	} else {
+		error = ctx->finalStatus;
+	}
+		
+	// syslog(LOG_ERR, "%s: WRITE_SEQ: Write at offset %llu done, mgr_req.request_done: %d, error %d",
+	//	__FUNCTION__, request_sq_wr->offset, mgr_req.request_done, error);
+		
+out1:
+	if (mgr_req != NULL)
+		release_writemgr_request(ctx, mgr_req);
+	
+	if (!error) {
+		// write succeeded, so turn off retry state
+		ctx->is_retry = 0;
+	}
+
 	return ( error );
 }
 

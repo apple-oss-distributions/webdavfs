@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2006-2008 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -20,31 +20,16 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
+#ifndef _LOAD_WEBDAVFS_H_
+#define _LOAD_WEBDAVFS_H_
 
-#ifndef _WEBDAV_REQUESTQUEUE_H_INCLUDE
-#define _WEBDAV_REQUESTQUEUE_H_INCLUDE
+#define WEBDAVFS_LOAD_KEXT_BOOTSTRAP_NAME "com.apple.webdavfs_load_kext"
+#define	WEBDAVFS_VFSNAME "webdavfs"
 
-#include <sys/types.h>
-#include <pthread.h>
-#include <mach/boolean.h>
-#include <unistd.h>
+typedef char *string_t;
 
-#include "webdav_cache.h"
-#include "webdav_network.h"
-
-/* Functions */
-#define WEBDAV_CONNECTION_UP 1
-#define WEBDAV_CONNECTION_DOWN 0
-extern int get_connectionstate(void);
-extern void set_connectionstate(int bad);
-
-extern int requestqueue_init(void);
-extern int requestqueue_enqueue_request(int socket);
-extern int requestqueue_enqueue_download(
-			struct node_entry *node,			/* the node */
-			struct ReadStreamRec *readStreamRecPtr); /* the ReadStreamRec */
-extern int requestqueue_enqueue_server_ping(u_int32_t delay);
-extern int requestqueue_purge_cache_files(void);
-extern int requestqueue_enqueue_seqwrite_manager(struct stream_put_ctx *);
+#define KEXT_LOAD_PATH "/sbin/kextload"
+#define WEBDAV_KEXT_PATH "/System/Library/Extensions/webdav_fs.kext"
+#define LOAD_WEBDAVKEXT_PATH "/System/Library/Extensions/smbfs.kext/Contents/Resources/load_webdav"
 
 #endif
