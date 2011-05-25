@@ -36,13 +36,14 @@
 #define WEBDAVLIB_MAX_AGAIN_COUNT 10
 
 // This is what we send as the User Agent header
-#define WEBAVLIB_USER_AGENT_STRING "WebDAVLib/1.1"
+#define WEBAVLIB_USER_AGENT_STRING "WebDAVLib/1.3"
 
 /* Macro to simplify common CFRelease usage */
 #define CFReleaseNull(obj) do { if(obj != NULL) { CFRelease(obj); obj = NULL; } } while (0)
 
 // Context for the callbacks
-enum CheckAuthCallbackStatus {CheckAuthInprogress = 0, CheckAuthCallbackDone = 1, CheckAuthCallbackStreamError = 2};
+enum CheckAuthCallbackStatus {CheckAuthInprogress = 0, CheckAuthCallbackDone = 1, CheckAuthCallbackStreamError = 2,
+								CheckAuthRedirection = 3};
 struct callback_ctx {
 	CFMutableDataRef		theData;		// buffer for the reply message
 	CFHTTPMessageRef		response;		// holds the response message
@@ -53,6 +54,10 @@ struct callback_ctx {
 	
 	boolean_t	triedServerCredentials;			// TRUE if we have tried server credentials
 	boolean_t	triedProxyServerCredentials;	// TRUE if we have tried proxy server credentials
+	
+	// Dealing with sending credentials securely
+	boolean_t	requireSecureLogin;			// TRUE if credentials must be sent securely (i.e. forbids BASIC Auth without SSL)
+	boolean_t	secureConnection;			// TRUE if SSL connection	
 	
 	// Proxy
 	CFStringRef				proxyRealm;
@@ -160,7 +165,7 @@ queryForProxy(CFURLRef a_url, CFMutableDictionaryRef proxyInfo, int *error)
 }
 
 enum WEBDAVLIBAuthStatus
-connectToServer(CFURLRef a_url, CFDictionaryRef creds, int *error)	
+connectToServer(CFURLRef a_url, CFDictionaryRef creds, boolean_t requireSecureLogin, int *error)	
 {	
 	enum WEBDAVLIBAuthStatus finalStatus;
 	int result;
@@ -168,6 +173,9 @@ connectToServer(CFURLRef a_url, CFDictionaryRef creds, int *error)
 	CFStringRef cf_port;
 	
 	initContext(&ctx);
+	
+	// remember if caller wants credentials to be sent securely
+	ctx.requireSecureLogin = requireSecureLogin;
 
 	finalStatus = sendOptionsRequestAuthenticated(a_url, &ctx, creds, &result);
 	*error = result;
@@ -202,6 +210,8 @@ sendOptionsRequest(CFURLRef a_url, struct callback_ctx *ctx, int *err)
 {
 	CFHTTPMessageRef message;
 	CFReadStreamRef rdStream;
+	CFURLRef myURL;
+	CFStringRef urlStr;
 	boolean_t done, tryAgain;
 	enum WEBDAVLIBAuthStatus finalStatus;
 
@@ -211,6 +221,8 @@ sendOptionsRequest(CFURLRef a_url, struct callback_ctx *ctx, int *err)
 	ctx->status = CheckAuthInprogress;
 	ctx->theData = CFDataCreateMutable(NULL, 0);
 	ctx->sslPropDict = NULL;
+	urlStr = NULL;
+	myURL = CFRetain(a_url);
 	
 	CFStreamClientContext context = {0, ctx, NULL, NULL, NULL};
 	
@@ -220,7 +232,7 @@ sendOptionsRequest(CFURLRef a_url, struct callback_ctx *ctx, int *err)
 	done = FALSE;
 	while (done == FALSE) {		
 		// create a CFHTTP message object
-		message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, CFSTR("OPTIONS"), a_url, kCFHTTPVersion1_1);		
+		message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, CFSTR("OPTIONS"), myURL, kCFHTTPVersion1_1);		
 		CFHTTPMessageSetHeaderFieldValue(message, CFSTR("User-Agent"), CFSTR(WEBAVLIB_USER_AGENT_STRING));
 		CFHTTPMessageSetHeaderFieldValue(message, CFSTR("Accept"), CFSTR("*/*"));
 		
@@ -229,9 +241,6 @@ sendOptionsRequest(CFURLRef a_url, struct callback_ctx *ctx, int *err)
 		message = NULL;
 		
 		ctx->status = CheckAuthInprogress;
-		
-		// turn on automatic redirection
-		CFReadStreamSetProperty(rdStream, kCFStreamPropertyHTTPShouldAutoredirect, kCFBooleanTrue);
 
 		// apply http/https proxy properties
 		if (ctx->proxyDict != NULL)
@@ -264,8 +273,39 @@ sendOptionsRequest(CFURLRef a_url, struct callback_ctx *ctx, int *err)
 				ctx->proxyAuth = CFHTTPAuthenticationCreateFromResponse(kCFAllocatorDefault, ctx->response);
 				ctx->proxyRealm = CFHTTPAuthenticationCopyRealm(ctx->proxyAuth);
 			}
-			
+
 			done = TRUE;
+		}
+		else if (ctx->status == CheckAuthRedirection) {
+			// Handle 3xx redirection
+			if(++ctx->againCount > WEBDAVLIB_MAX_AGAIN_COUNT)
+			{
+				// too many redirects
+				*err = EIO;
+				finalStatus = WEBDAVLIB_IOError;
+				done = TRUE;				
+			}
+			else {
+				urlStr = CFHTTPMessageCopyHeaderFieldValue(ctx->response, CFSTR("Location"));
+				if (urlStr == NULL) {
+					*err = EIO;
+					finalStatus = WEBDAVLIB_IOError;
+					done = TRUE;
+				}
+				else {
+					myURL = CFURLCreateWithString(kCFAllocatorDefault, urlStr, NULL);
+					CFRelease(urlStr);
+					urlStr = NULL;
+				
+					if (myURL == NULL) {
+						*err = EIO;
+						finalStatus = WEBDAVLIB_IOError;
+						done = TRUE;						
+					}
+					
+					syslog(LOG_DEBUG, "%s: Handling a redirection", __FUNCTION__);
+				}
+			}
 		}
 		else if (ctx->status = CheckAuthCallbackStreamError) {
 			*err = handleStreamError(ctx, &tryAgain);
@@ -286,6 +326,10 @@ sendOptionsRequest(CFURLRef a_url, struct callback_ctx *ctx, int *err)
 		CFRelease(ctx->theData);
 		ctx->theData = CFDataCreateMutable(NULL, 0);		
 	}
+	
+	if (myURL != NULL)
+		CFRelease(myURL);
+	
 	return (finalStatus);
 }
 
@@ -294,11 +338,15 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 {
 	CFHTTPMessageRef message;
 	CFReadStreamRef rdStream;
+	CFURLRef myURL;
+	CFStringRef urlStr, method;	
 	boolean_t done, tryAgain;
 
 	enum WEBDAVLIBAuthStatus finalStatus;
 	
 	*err = 0;
+	urlStr = NULL;
+	myURL = CFRetain(a_url);	
 	
 	// initialize the context struct
 	ctx->status = CheckAuthInprogress;
@@ -313,7 +361,7 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 	done = FALSE;
 	while (done == FALSE) {		
 		// create a CFHTTP message object
-		message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, CFSTR("OPTIONS"), a_url, kCFHTTPVersion1_1);		
+		message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, CFSTR("OPTIONS"), myURL, kCFHTTPVersion1_1);		
 		CFHTTPMessageSetHeaderFieldValue(message, CFSTR("User-Agent"), CFSTR(WEBAVLIB_USER_AGENT_STRING));
 		CFHTTPMessageSetHeaderFieldValue(message, CFSTR("Accept"), CFSTR("*/*"));
 		
@@ -325,9 +373,6 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 		message = NULL;
 			
 		ctx->status = CheckAuthInprogress;
-			
-		// turn on automatic redirection
-		CFReadStreamSetProperty(rdStream, kCFStreamPropertyHTTPShouldAutoredirect, kCFBooleanTrue);
 			
 		// apply http/https proxy properties
 		if (ctx->proxyDict != NULL)
@@ -368,17 +413,31 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 							syslog(LOG_DEBUG, "%s: Server CFHTTPAuthenticationIsValid is FALSE", __FUNCTION__);
 							*err = EIO;
 							done = TRUE;
-							continue;
 						}
 						
 						// Do we need credentials at this point?
-						if (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->serverAuth) == TRUE) {
+						if ( (done == FALSE) && (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->serverAuth) == TRUE) ) {
 							// Were we given server credentials?
 							if (CFDictionaryContainsKey(creds, kWebDAVLibUserNameKey) == FALSE) {
 								// No server credentials, so just return WEBDAVLIB_ServerAuth
 								syslog(LOG_DEBUG, "%s: No server credentials in dictionary", __FUNCTION__);
 								done = TRUE;
-							}						
+							}
+							
+							// Check if credentials must be sent securely
+							if ( (done == FALSE) && (ctx->requireSecureLogin == TRUE) && (ctx->secureConnection == FALSE) ) {
+								method = CFHTTPAuthenticationCopyMethod(ctx->serverAuth);
+								if ( method != NULL ) {
+									if (CFEqual(method, CFSTR("Basic")) == TRUE) {
+										// game over
+										syslog(LOG_ERR, "%s: Authentication (Basic) too weak", __FUNCTION__);
+										done = TRUE;
+										*err = EAUTH;
+									}
+									CFRelease(method);
+								}
+							}
+
 						}
 					}
 					else {
@@ -400,11 +459,10 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 								syslog(LOG_DEBUG, "%s: Server CFHTTPAuthenticationIsValid is FALSE", __FUNCTION__);
 								*err = EIO;
 								done = TRUE;
-								continue;
 							}
 							
 							// Do we need server credentials at this point?
-							if (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->serverAuth) == TRUE) {
+							if ( (done == FALSE) && (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->serverAuth) == TRUE) ) {
 								// Were we given server credentials?
 								if (CFDictionaryContainsKey(creds, kWebDAVLibUserNameKey) == FALSE) {
 									// No server credentials, so just return WEBDAVLIB_ServerAuth
@@ -413,11 +471,25 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 								}
 								
 								// Have we already tried server credentials?
-								if (ctx->triedServerCredentials == TRUE) {
+								if ( (done == FALSE) && (ctx->triedServerCredentials == TRUE) ) {
 									// The server credentials were rejected, just return WEBDAVLIB_ServerAuth
 									syslog(LOG_DEBUG, "%s: Server credentials were not accepted", __FUNCTION__);
 									done = TRUE;
 								}
+								
+								// Check if credentials must be sent securely
+								if ( (done == FALSE) && (ctx->requireSecureLogin == TRUE) && (ctx->secureConnection == FALSE)) {
+									method = CFHTTPAuthenticationCopyMethod(ctx->serverAuth);
+									if ( method != NULL ) {
+										if (CFEqual(method, CFSTR("Basic")) == TRUE) {
+											// game over
+											syslog(LOG_ERR, "%s: Authentication (Basic) too weak", __FUNCTION__);
+											done = TRUE;
+											*err = EAUTH;
+										}
+										CFRelease(method);
+									}
+								}								
 							}
 						}
 						else {
@@ -448,17 +520,30 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 							syslog(LOG_DEBUG, "%s: Proxy CFHTTPAuthenticationIsValid is FALSE", __FUNCTION__);
 							*err = EIO;
 							done = TRUE;
-							continue;
 						}
 						
 						// Do we need proxy server credentials at this point?
-						if (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->proxyAuth) == TRUE) {
+						if ( (done == FALSE) && (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->proxyAuth) == TRUE) ) {
 							// Were we given proxy server credentials?
 							if (CFDictionaryContainsKey(creds, kWebDAVLibProxyUserNameKey) == FALSE) {
 								// No proxyserver credentials, so just return WEBDAVLIB_ProxyAuth
 								syslog(LOG_DEBUG, "%s: No proxy server credentials in dictionary", __FUNCTION__);
 								done = TRUE;
 							}
+							
+							// Check if credentials must be sent securely
+							if ( (done == FALSE) && (ctx->requireSecureLogin == TRUE) && (ctx->secureConnection == FALSE)) {
+								method = CFHTTPAuthenticationCopyMethod(ctx->proxyAuth);
+								if ( method != NULL ) {
+									if (CFEqual(method, CFSTR("Basic")) == TRUE) {
+										// game over
+										syslog(LOG_ERR, "%s: Proxy Server authentication (Basic) too weak", __FUNCTION__);
+										done = TRUE;
+										*err = EAUTH;
+									}
+									CFRelease(method);
+								}
+							}							
 						}
 					}
 					else {
@@ -480,11 +565,10 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 								syslog(LOG_DEBUG, "%s: Proxy server CFHTTPAuthenticationIsValid is FALSE", __FUNCTION__);
 								*err = EIO;
 								done = TRUE;
-								continue;
 							}
 							
 							// Do we need proxy server credentials at this point?
-							if (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->proxyAuth) == TRUE) {
+							if ((done == FALSE) && (CFHTTPAuthenticationRequiresUserNameAndPassword(ctx->proxyAuth) == TRUE) ) {
 								// Were we given proxy server credentials?
 								if (CFDictionaryContainsKey(creds, kWebDAVLibProxyUserNameKey) == FALSE) {
 									// No proxyserver credentials, so just return WEBDAVLIB_ProxyAuth
@@ -493,10 +577,23 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 								}
 								
 								// Have we already tried proxy server credentials?
-								if (ctx->triedProxyServerCredentials == TRUE) {
+								if ((done == FALSE) && (ctx->triedProxyServerCredentials == TRUE) ) {
 									// The proxy server credentials were rejected, just return WEBDAVLIB_ProxyAuth
 									syslog(LOG_DEBUG, "%s: Proxy server credentials were not accepted", __FUNCTION__);
 									done = TRUE;
+								}	
+								// Check if credentials must be sent securely
+								if ( (done == FALSE) && (ctx->requireSecureLogin == TRUE) && (ctx->secureConnection == FALSE)) {
+									method = CFHTTPAuthenticationCopyMethod(ctx->proxyAuth);
+									if ( method != NULL ) {
+										if (CFEqual(method, CFSTR("Basic")) == TRUE) {
+											// game over
+											syslog(LOG_ERR, "%s: Proxy Server authentication (Basic) too weak", __FUNCTION__);
+											done = TRUE;
+											*err = EAUTH;
+										}
+										CFRelease(method);
+									}
 								}								
 							}
 						}
@@ -512,6 +609,37 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 			}
 			else {
 				done = TRUE;
+			}
+		}
+		else if (ctx->status == CheckAuthRedirection) {
+			// Handle 3xx redirection
+			if(++ctx->againCount > WEBDAVLIB_MAX_AGAIN_COUNT)
+			{
+				// too many redirects
+				*err = EIO;
+				finalStatus = WEBDAVLIB_IOError;
+				done = TRUE;				
+			}
+			else {
+				urlStr = CFHTTPMessageCopyHeaderFieldValue(ctx->response, CFSTR("Location"));
+				if (urlStr == NULL) {
+					*err = EIO;
+					finalStatus = WEBDAVLIB_IOError;
+					done = TRUE;
+				}
+				else {
+					myURL = CFURLCreateWithString(kCFAllocatorDefault, urlStr, NULL);
+					CFRelease(urlStr);
+					urlStr = NULL;
+					
+					if (myURL == NULL) {
+						*err = EIO;
+						finalStatus = WEBDAVLIB_IOError;
+						done = TRUE;						
+					}
+					
+					syslog(LOG_DEBUG, "%s: Handling a redirection", __FUNCTION__);
+				}
 			}
 		}
 		else if (ctx->status = CheckAuthCallbackStreamError) {
@@ -533,6 +661,10 @@ sendOptionsRequestAuthenticated(CFURLRef a_url, struct callback_ctx *ctx, CFDict
 		CFRelease(ctx->theData);
 		ctx->theData = CFDataCreateMutable(NULL, 0);		
 	}
+	
+	if (myURL != NULL)
+		CFRelease(myURL);
+	
 	return (finalStatus);
 }
 
@@ -585,7 +717,7 @@ finalStatusFromStatusCode(struct callback_ctx *ctx, int *error)
 				*error = EAUTH;
 			}
 			else {
-				syslog(LOG_ERR, "%s: unexpected http status code %d\n", __FUNCTION__, ctx->statusCode);
+				syslog(LOG_ERR, "%s: unexpected http status code %ld\n", __FUNCTION__, ctx->statusCode);
 				*error = EIO;
 				finalStatus = WEBDAVLIB_UnexpectedStatus;
 			}
@@ -594,7 +726,7 @@ finalStatusFromStatusCode(struct callback_ctx *ctx, int *error)
 		case 3:		// Redirection   3xx
 		case 5:		// Server error  5xx
 		default:
-			syslog(LOG_ERR, "%s: unexpected http status code %d\n", __FUNCTION__, ctx->statusCode);
+			syslog(LOG_ERR, "%s: unexpected http status code %ld\n", __FUNCTION__, ctx->statusCode);
 			finalStatus = WEBDAVLIB_UnexpectedStatus;
 			*error = EIO;
 			break;
@@ -622,7 +754,7 @@ handleStreamError(struct callback_ctx *ctx, boolean_t *tryAgain)
 				*tryAgain = TRUE;
 		}
 		else
-			syslog(LOG_ERR, "%s: stream error domain: posix error: %d\n", __FUNCTION__, ctx->streamError.error);	
+			syslog(LOG_ERR, "%s: stream error domain: posix error: %d\n", __FUNCTION__, (int)ctx->streamError.error);
 	}
 	else if (ctx->streamError.domain == kCFStreamErrorDomainHTTP) {
 		if (ctx->streamError.error == kCFStreamErrorHTTPConnectionLost) {
@@ -632,7 +764,7 @@ handleStreamError(struct callback_ctx *ctx, boolean_t *tryAgain)
 			result = ECONNRESET;
 		}
 		else {
-			syslog(LOG_ERR, "%s: stream error domain: http error: %d", __FUNCTION__, ctx->streamError.error);
+			syslog(LOG_ERR, "%s: stream error domain: http error: %d", __FUNCTION__, (int)ctx->streamError.error);
 			result = EIO;
 		}
 	}
@@ -647,13 +779,13 @@ handleStreamError(struct callback_ctx *ctx, boolean_t *tryAgain)
 			result = EADDRNOTAVAIL;
 			break;
 		default:
-				syslog(LOG_ERR, "%s: stream error domain: netdb error: %d\n", __FUNCTION__, ctx->streamError.error);
+				syslog(LOG_ERR, "%s: stream error domain: netdb error: %d\n", __FUNCTION__, (int)ctx->streamError.error);
 			result = EIO;
 			break;
 		}
 	}
 	else {
-		syslog(LOG_ERR, "%s: stream error domain: %ld error: %d\n", __FUNCTION__, ctx->streamError.domain, ctx->streamError.error);
+		syslog(LOG_ERR, "%s: stream error domain: %ld error: %d\n", __FUNCTION__, ctx->streamError.domain, (int)ctx->streamError.error);
 		result = EIO;
 	}
 	return (result);
@@ -671,9 +803,12 @@ handleSSLErrors(struct callback_ctx *ctx, boolean_t *tryAgain)
 	// in most cases we try again
 	*tryAgain = TRUE;
 	
+	// indicate SSL connection
+	ctx->secureConnection = TRUE;	
+	
 	error = ctx->streamError.error;
 
-	syslog(LOG_DEBUG, "%s: stream error domain: ssl error: %d", __FUNCTION__, ctx->streamError.error);
+	syslog(LOG_DEBUG, "%s: stream error domain: ssl error: %d", __FUNCTION__, (int)ctx->streamError.error);
 	
 	if (ctx->sslPropDict == NULL)
 		ctx->sslPropDict = CFDictionaryCreateMutable(kCFAllocatorDefault,
@@ -730,7 +865,7 @@ handleSSLErrors(struct callback_ctx *ctx, boolean_t *tryAgain)
 			break;
 				
 		default:
-			syslog(LOG_ERR, "%s: stream error domain: ssl error: %d", __FUNCTION__, ctx->streamError.error);
+			syslog(LOG_ERR, "%s: stream error domain: ssl error: %d", __FUNCTION__, (int)ctx->streamError.error);
 			// no sense in retrying
 			*tryAgain = TRUE;
 			break;
@@ -762,20 +897,25 @@ static void checkServerAuth_handleStreamEvent(CFReadStreamRef stream, CFStreamEv
 			theResponsePropertyRef = CFReadStreamCopyProperty(stream, kCFStreamPropertyHTTPResponseHeader);
 			ctx->response = *((CFHTTPMessageRef*)((void*)&theResponsePropertyRef));
 			ctx->statusCode = CFHTTPMessageGetResponseStatusCode(ctx->response);
-			ctx->status = CheckAuthCallbackDone;
-			syslog(LOG_DEBUG, "%s: StreamEventEndEncountered, status code %d\n", __FUNCTION__, ctx->statusCode);
+			if ((ctx->statusCode / 100) == 3) {
+				// redirection
+				ctx->status = CheckAuthRedirection;
+			}
+			else
+				ctx->status = CheckAuthCallbackDone;
+			syslog(LOG_DEBUG, "%s: StreamEventEndEncountered, status code %ld\n", __FUNCTION__, ctx->statusCode);
 			break;
 			
 		case kCFStreamEventErrorOccurred:
 			streamError = CFReadStreamGetError(stream);			
 			syslog(LOG_DEBUG,"%s: EventHasErrorOccurred: domain %ld, error %d",
-				   __FUNCTION__, streamError.domain, streamError.error);
+				   __FUNCTION__, streamError.domain, (int)streamError.error);
 			ctx->streamError = streamError;
 			ctx->status = CheckAuthCallbackStreamError;
 			break;
         
 		default:
-			syslog(LOG_DEBUG, "%s: Received unexpected stream event %d\n", __FUNCTION__, type);
+			syslog(LOG_DEBUG, "%s: Received unexpected stream event %lu\n", __FUNCTION__, type);
 			break;
 	}	
 }
@@ -894,6 +1034,8 @@ static void initContext(struct callback_ctx *ctx)
 	ctx->againCount = 0;
 	ctx->triedServerCredentials = FALSE;
 	ctx->triedProxyServerCredentials = FALSE;
+	ctx->requireSecureLogin = FALSE;
+	ctx->secureConnection = FALSE;	
 	ctx->proxyRealm = NULL;
 	ctx->httpProxyEnabled = FALSE;
 	ctx->httpProxyServer = NULL;
