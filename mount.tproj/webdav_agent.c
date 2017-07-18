@@ -232,8 +232,14 @@ static OSStatus KeychainItemCopyAccountPassword(SecKeychainItemRef itemRef,
 			syslog(LOG_ERR, "%s: keychain username or password is too long!", __FUNCTION__);
 			result = ENAMETOOLONG;
 		} else {
-			(void)strlcpy(username, attr.data, user_size);
-			(void)strlcpy(password, outData, pass_size);
+			if (strlcpy(username, attr.data, attr.length) != attr.length) {
+				syslog(LOG_ERR, "%s: (strlcpy) username was not copied completely!", __FUNCTION__);
+				result = errSecParam;
+			}
+			if (strlcpy(password, outData, length) != length) {
+				syslog(LOG_ERR, "%s: (strlcpy) password was not copied completely!", __FUNCTION__);
+				result = errSecParam;
+			}
 		}
 		
 		(void) SecKeychainItemFreeContent(&attrList, outData);
@@ -613,6 +619,33 @@ static boolean_t readCredentialsFromFile(int fd, char *userName, char *userPassw
 		rlen = read(fd, proxyUserPassword, len1);
 		if (rlen < 0) {
 			return FALSE;
+		}
+	}
+
+	// read Certificate Chain
+	rlen = read(fd, &be_len, sizeof(be_len));
+	if (rlen != sizeof(be_len)) {
+		return FALSE;
+	}
+	len1 = ntohl(be_len);
+	syslog(LOG_DEBUG,"%s: certs_data length=(%ld)", __FUNCTION__, len1);
+	// CFArray of CFData (certs_data)
+	// read certs_data (if length not zero)
+	if (len1) {
+		char *certs_data = malloc(len1);
+
+		rlen = read(fd, certs_data, len1);
+		if (rlen < 0) {
+			free(certs_data);
+			return FALSE;
+		}
+		CFDataRef certs_cfdata = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)certs_data, len1);
+		free(certs_data);
+		if (certs_cfdata) {
+			certs_init(certs_cfdata);
+			CFRelease(certs_cfdata);
+		} else {
+			syslog(LOG_ERR,"%s: CFDataCreate failed", __FUNCTION__);
 		}
 	}
 	
