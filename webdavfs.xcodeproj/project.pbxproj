@@ -409,6 +409,7 @@
 		DD6612FA09C88572009325F2 /* LogMessage.c */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.c; name = LogMessage.c; path = mount.tproj/LogMessage.c; sourceTree = "<group>"; };
 		DD6612FC09C8857E009325F2 /* LogMessage.h */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.h; name = LogMessage.h; path = mount.tproj/LogMessage.h; sourceTree = "<group>"; };
 		E23E05091475FEF600FA999A /* webdav_agent.sb */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = webdav_agent.sb; path = mount.tproj/webdav_agent.sb; sourceTree = "<group>"; };
+		F991F3CB207830EE00FF1521 /* kext.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = kext.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -535,6 +536,7 @@
 		0352AA240043263F11CA2A40 /* webdavfs_kext */ = {
 			isa = PBXGroup;
 			children = (
+				F991F3CB207830EE00FF1521 /* kext.xcconfig */,
 				0352AA2C0043263F11CA2A40 /* Headers */,
 				0352AA2F0043263F11CA2A40 /* Sources */,
 			);
@@ -878,7 +880,7 @@
 		0352A9F90043263F11CA2A40 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastUpgradeCheck = 0460;
+				LastUpgradeCheck = 1000;
 			};
 			buildConfigurationList = A4A08D5808FC777000820824 /* Build configuration list for PBXProject "webdavfs" */;
 			compatibilityVersion = "Xcode 3.2";
@@ -1192,7 +1194,7 @@
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = YES;
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -1217,6 +1219,7 @@
 					"-Wmost",
 				);
 				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.URLMount.WebDAVPlugin;
 				PRODUCT_NAME = http;
 				SDKROOT = macosx.internal;
 				VALID_ARCHS = "i386 x86_64";
@@ -1229,7 +1232,7 @@
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = YES;
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -1251,6 +1254,7 @@
 					"-Wmost",
 				);
 				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.URLMount.WebDAVPlugin;
 				PRODUCT_NAME = http;
 				SDKROOT = macosx.internal;
 				VALID_ARCHS = "i386 x86_64";
@@ -1263,7 +1267,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG = 1;
 				FRAMEWORK_SEARCH_PATHS = "";
@@ -1300,7 +1304,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COPY_PHASE_STRIP = YES;
 				FRAMEWORK_SEARCH_PATHS = "";
 				GCC_TREAT_WARNINGS_AS_ERRORS = NO;
@@ -1331,9 +1335,9 @@
 		};
 		72B01E7C0BC48C5500C182DA /* Development */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
+			baseConfigurationReference = F991F3CB207830EE00FF1521 /* kext.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG = 1;
@@ -1346,7 +1350,6 @@
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				INFOPLIST_FILE = "Info-webdav_fs_Kernel_Extension.plist";
-				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				KERNEL_EXTENSION = YES;
 				KERNEL_MODULE = YES;
 				LIBRARY_SEARCH_PATHS = "";
@@ -1360,6 +1363,7 @@
 					"-msoft-float",
 				);
 				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.filesystems.webdav;
 				PRODUCT_NAME = webdav_fs;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1377,9 +1381,9 @@
 		};
 		72B01E7D0BC48C5500C182DA /* Deployment */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
+			baseConfigurationReference = F991F3CB207830EE00FF1521 /* kext.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
@@ -1387,7 +1391,6 @@
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = "Info-webdav_fs_Kernel_Extension.plist";
-				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				KERNEL_EXTENSION = YES;
 				KERNEL_MODULE = YES;
 				LIBRARY_SEARCH_PATHS = "";
@@ -1401,6 +1404,7 @@
 					"-msoft-float",
 				);
 				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.filesystems.webdav;
 				PRODUCT_NAME = webdav_fs;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1420,7 +1424,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG = 1;
@@ -1441,6 +1445,7 @@
 					suppress,
 				);
 				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.WebDAVFS;
 				PRODUCT_NAME = webdav;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1460,7 +1465,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				FRAMEWORK_SEARCH_PATHS = "";
@@ -1477,6 +1482,7 @@
 					suppress,
 				);
 				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.WebDAVFS;
 				PRODUCT_NAME = webdav;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1496,7 +1502,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG = 1;
@@ -1518,6 +1524,7 @@
 					AppKit,
 				);
 				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.WebDAVFS.webdav-cert-ui";
 				PRODUCT_NAME = webdav_cert_ui;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1535,7 +1542,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
@@ -1553,6 +1560,7 @@
 					AppKit,
 				);
 				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.WebDAVFS.webdav-cert-ui";
 				PRODUCT_NAME = webdav_cert_ui;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1570,7 +1578,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG = 1;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1624,7 +1632,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COPY_PHASE_STRIP = YES;
 				DEBUG = "";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1677,13 +1685,42 @@
 		72E6C5B31CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
 			};
 			name = DebugCoverage;
 		};
 		72E6C5B41CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1693,6 +1730,7 @@
 		72E6C5B51CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1701,6 +1739,7 @@
 		72E6C5B61CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1709,6 +1748,7 @@
 		72E6C5B71CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1717,6 +1757,7 @@
 		72E6C5B81CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1725,6 +1766,7 @@
 		72E6C5B91CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1733,6 +1775,7 @@
 		72E6C5BA1CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1741,6 +1784,7 @@
 		72E6C5BB1CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1749,6 +1793,7 @@
 		72E6C5BC1CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1757,6 +1802,7 @@
 		72E6C5BD1CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -1765,6 +1811,7 @@
 		72E6C5BE1CFF9D2400046B85 /* DebugCoverage */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = "";
@@ -1775,7 +1822,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COPY_PHASE_STRIP = YES;
 				FRAMEWORK_SEARCH_PATHS = "";
 				GCC_TREAT_WARNINGS_AS_ERRORS = NO;
@@ -1816,7 +1863,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
@@ -1824,7 +1871,6 @@
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = "Info-webdav_fs_Kernel_Extension.plist";
-				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				KERNEL_EXTENSION = YES;
 				KERNEL_MODULE = YES;
 				LIBRARY_SEARCH_PATHS = "";
@@ -1840,6 +1886,7 @@
 					"-fcoverage-mapping",
 				);
 				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.filesystems.webdav;
 				PRODUCT_NAME = webdav_fs;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1859,7 +1906,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				FRAMEWORK_SEARCH_PATHS = "";
@@ -1876,6 +1923,7 @@
 					suppress,
 				);
 				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.WebDAVFS;
 				PRODUCT_NAME = webdav;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1895,7 +1943,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
@@ -1918,6 +1966,7 @@
 					"-fprofile-instr-generate",
 				);
 				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.WebDAVFS.webdav-cert-ui";
 				PRODUCT_NAME = webdav_cert_ui;
 				SDKROOT = macosx.internal;
 				SECTORDER_FLAGS = "";
@@ -1935,7 +1984,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COPY_PHASE_STRIP = YES;
 				DEBUG = "";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1994,7 +2043,7 @@
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = YES;
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -2018,6 +2067,7 @@
 					"-fcoverage-mapping",
 				);
 				OTHER_LDFLAGS = "-fprofile-instr-generate";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.URLMount.WebDAVPlugin;
 				PRODUCT_NAME = http;
 				SDKROOT = macosx.internal;
 				VALID_ARCHS = "i386 x86_64";
@@ -2031,7 +2081,7 @@
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -2055,7 +2105,7 @@
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				GCC_DYNAMIC_NO_PIC = NO;
@@ -2075,7 +2125,7 @@
 			baseConfigurationReference = 8F096241118A5C2F00C03286 /* webdavfs.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -2092,20 +2142,75 @@
 		A4A08D5908FC777000820824 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
 			};
 			name = Development;
 		};
 		A4A08D5A08FC777000820824 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
 			};
 			name = Deployment;
 		};
 		E20280EF151183E8005A5B16 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2114,6 +2219,7 @@
 		E20280F0151183E8005A5B16 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2122,6 +2228,7 @@
 		E20280F51511840E005A5B16 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2130,6 +2237,7 @@
 		E20280F61511840E005A5B16 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2138,6 +2246,7 @@
 		E20280F91511842A005A5B16 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2146,6 +2255,7 @@
 		E20280FA1511842A005A5B16 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2154,6 +2264,7 @@
 		E20280FD1511845C005A5B16 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -2163,6 +2274,7 @@
 		E20280FE1511845C005A5B16 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -2172,6 +2284,7 @@
 		E202810115118469005A5B16 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2180,6 +2293,7 @@
 		E202810215118469005A5B16 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2188,6 +2302,7 @@
 		E202810515118479005A5B16 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2196,6 +2311,7 @@
 		E202810615118479005A5B16 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2204,6 +2320,7 @@
 		E20281091511848C005A5B16 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2212,6 +2329,7 @@
 		E202810A1511848C005A5B16 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2220,6 +2338,7 @@
 		E284C65314BFAB3C00E07082 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2228,6 +2347,7 @@
 		E284C65414BFAB3C00E07082 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2236,6 +2356,7 @@
 		E284C65914BFAB4800E07082 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2244,6 +2365,7 @@
 		E284C65A14BFAB4800E07082 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2252,6 +2374,7 @@
 		E284C65D14BFAB5200E07082 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2260,6 +2383,7 @@
 		E284C65E14BFAB5200E07082 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
@@ -2268,6 +2392,7 @@
 		E284C67B14C0988800E07082 /* Development */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = "";
@@ -2277,6 +2402,7 @@
 		E284C67C14C0988800E07082 /* Deployment */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				COMBINE_HIDPI_IMAGES = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = "";
